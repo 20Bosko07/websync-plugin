@@ -1,5 +1,6 @@
 import { Platform } from "obsidian";
-import type { DeviceStartRequest, DeviceStartResponse, DevicePollResponse, MeResponse } from "@websync/shared";
+import { PROTOCOL_VERSION, type DeviceStartRequest, type DeviceStartResponse, type DevicePollResponse, type MeResponse } from "@websync/shared";
+import { t } from "../i18n";
 import { apiRequest } from "./httpClient.js";
 
 /**
@@ -23,6 +24,18 @@ export class AuthClient {
     return url;
   }
 
+  /**
+   * Refuses to pair with a server that speaks another protocol / crypto format version, instead of failing later in
+   * confusing ways. A server that does not report a version (older hosted builds) is let through.
+   */
+  async assertCompatibleServer(): Promise<void> {
+    const health = await apiRequest<{ protocolVersion?: number } | undefined>(this.serverUrl, { path: "/health" });
+    const server = health?.protocolVersion;
+    if (server === undefined || server === PROTOCOL_VERSION) return;
+    const which = server > PROTOCOL_VERSION ? t("p.protocolPlugin") : t("p.protocolServer");
+    throw new Error(t("p.protocolMismatch", { server, plugin: PROTOCOL_VERSION, which }));
+  }
+
   async register(email: string, password: string): Promise<void> {
     await apiRequest<void>(this.serverUrl, {
       method: "POST",
@@ -37,6 +50,7 @@ export class AuthClient {
    * both platforms, so this has to be a runtime check.
    */
   async startDeviceAuth(deviceName: string): Promise<DeviceStartResponse> {
+    await this.assertCompatibleServer();
     const clientType = Platform.isMobile ? "plugin-mobile" : "plugin-desktop";
     const resolvedDeviceName = deviceName.trim() || `WebSync Plugin (${Platform.isMobile ? "Mobile" : "Desktop"})`;
     const payload: DeviceStartRequest = { clientType, deviceName: resolvedDeviceName };

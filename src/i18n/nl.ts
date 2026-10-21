@@ -163,4 +163,7 @@ export const nl: Partial<Record<MessageKey, string>> = {
   "p.sync.tooBigServer": "WebSync: \"{path}\" ({size}) is groter dan de bestandslimiet van {limit} van je account en wordt niet gesynchroniseerd.",
   "p.notice.storageFull": "WebSync: je opslag is vol – wijzigingen worden niet meer gesynchroniseerd. Maak ruimte vrij of kies een groter pakket.",
   "p.notice.readOnly": "WebSync: je account is alleen-lezen – wijzigingen worden niet meer gesynchroniseerd. Kies een pakket om te blijven synchroniseren.",
+  "p.protocolMismatch": "Deze server gebruikt een andere WebSync-protocolversie (server {server}, plugin {plugin}). Werk {which} bij.",
+  "p.protocolPlugin": "de plugin",
+  "p.protocolServer": "de server",
 };

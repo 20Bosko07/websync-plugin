@@ -7,8 +7,6 @@ import { CLIENT_TYPES, COLLAB_MAX_RELAY_BASE64_LENGTH, LOCALES, TWO_FACTOR_METHO
 export const RegisterRequestSchema = z.object({
   email: z.string().email(),
   password: z.string().min(10),
-  /** Cloudflare Turnstile token; required only while the server has a Turnstile secret configured. */
-  captchaToken: z.string().max(4096).optional(),
 });
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 
@@ -29,6 +27,15 @@ export const LoginResponseSchema = z.object({
   emailCodeSent: z.boolean(),
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+/**
+ * Result of `POST /auth/login`: a second factor is still needed (`LoginResponse`), or - on a server without e-mail and
+ * for an account without authenticator / passkey - the password alone was enough and the session is issued right away.
+ */
+export type LoginResult = LoginResponse | SessionTokenResponse;
+export function loginFinished(result: LoginResult): result is SessionTokenResponse {
+  return "sessionToken" in result;
+}
 
 export const SwitchLoginMethodRequestSchema = z.object({
   pendingLoginToken: z.string().uuid(),
@@ -540,3 +547,29 @@ export const PasskeyLoginVerifyRequestSchema = z.object({
   response: z.record(z.unknown()),
 });
 export type PasskeyLoginVerifyRequest = z.infer<typeof PasskeyLoginVerifyRequestSchema>;
+
+// --- Setup / public server info ---
+
+/** `GET /public-config` - what the web app needs to know before anybody is signed in. */
+export interface PublicConfig {
+  /** No account exists yet: the first-run setup page must be shown. */
+  needsSetup: boolean;
+  /** The server can send e-mail. Without it there is no e-mail verification, no e-mail codes and no "forgot password". */
+  mailEnabled: boolean;
+  registrationOpen: boolean;
+  protocolVersion: number;
+}
+
+export const SetupRequestSchema = z.object({
+  /** The one-time token the server printed to its log at start-up. */
+  setupToken: z.string().min(1).max(200),
+  email: z.string().email(),
+  password: z.string().min(10).max(1000),
+});
+export type SetupRequest = z.infer<typeof SetupRequestSchema>;
+
+export const ChangePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(1000),
+  newPassword: z.string().min(10).max(1000),
+});
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;

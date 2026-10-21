@@ -162,6 +162,9 @@ export const en = {
   "p.sync.tooBigServer": "WebSync: \"{path}\" ({size}) is larger than the {limit} file limit of your account and is not synced.",
   "p.notice.storageFull": "WebSync: Your storage is full - changes are not synced any more. Free up space or choose a bigger plan.",
   "p.notice.readOnly": "WebSync: Your account is read-only - changes are not synced any more. Choose a plan to keep syncing.",
+  "p.protocolMismatch": "This server uses a different WebSync protocol version (server {server}, plugin {plugin}). Update the {which}.",
+  "p.protocolPlugin": "the plugin",
+  "p.protocolServer": "the server",
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -163,4 +163,7 @@ export const fr: Partial<Record<MessageKey, string>> = {
   "p.sync.tooBigServer": "WebSync : « {path} » ({size}) dépasse la limite de {limit} par fichier de votre compte et n'est pas synchronisé.",
   "p.notice.storageFull": "WebSync : votre stockage est plein – les modifications ne sont plus synchronisées. Libérez de l'espace ou choisissez une offre plus grande.",
   "p.notice.readOnly": "WebSync : votre compte est en lecture seule – les modifications ne sont plus synchronisées. Choisissez une offre pour continuer.",
+  "p.protocolMismatch": "Ce serveur utilise une autre version du protocole WebSync (serveur {server}, plugin {plugin}). Mettez à jour {which}.",
+  "p.protocolPlugin": "le plugin",
+  "p.protocolServer": "le serveur",
 };

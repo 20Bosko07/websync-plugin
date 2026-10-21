@@ -65,3 +65,9 @@ export const UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
 /** Transfers that take longer than this get a progress ring in the file explorer (shorter ones would only flicker). */
 export const TRANSFER_PROGRESS_DELAY_MS = 2000;
+
+/**
+ * Version of the wire protocol / crypto format the plugin and the server must agree on. Bump it on every change that
+ * an older plugin cannot cope with; the server reports it on `/health` and the plugin refuses to sync on a mismatch.
+ */
+export const PROTOCOL_VERSION = 1;

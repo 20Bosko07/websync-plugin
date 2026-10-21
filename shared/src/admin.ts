@@ -3,7 +3,6 @@
  * Request bodies are zod schemas (validated by the server); responses are plain interfaces.
  */
 import { z } from "zod";
-import { AdminCompSchema, AdminQuotaOverrideSchema, type BillingState } from "./billing";
 
 export const USER_ROLES = ["user", "admin"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
@@ -14,16 +13,6 @@ export const AdminSettingsSchema = z.object({
   registrationOpen: z.boolean(),
   /** Storage quota (bytes) given to newly created accounts; null = unlimited. */
   defaultQuotaBytes: z.number().int().positive().nullable(),
-  /**
-   * Total storage (bytes) this server may hand out. New trials and subscriptions are refused once the sum of all
-   * quotas (an unlimited account counts with what it uses) would exceed it, so the disk is never oversold. null = no limit.
-   */
-  serverBudgetBytes: z.number().int().positive().nullable().default(null),
-  /**
-   * Show the packages (landing page, plan page, settings) even while Creem is not set up yet - they are then marked
-   * "coming soon" and cannot be bought. With Creem configured they are always shown.
-   */
-  showPricing: z.boolean().default(false),
 });
 export type AdminSettings = z.infer<typeof AdminSettingsSchema>;
 
@@ -43,12 +32,8 @@ export type AdminCreateUserRequest = z.infer<typeof AdminCreateUserSchema>;
 export const AdminUpdateUserSchema = z.object({
   role: z.enum(USER_ROLES).optional(),
   disabled: z.boolean().optional(),
-  /** null removes the limit. Only for accounts the payment system does not manage - see `quotaOverride`. */
+  /** null removes the limit. */
   quotaBytes: z.number().int().positive().nullable().optional(),
-  /** Replaces the quota of a billing-managed account; needs the double confirmation. */
-  quotaOverride: AdminQuotaOverrideSchema.optional(),
-  /** Gives the account a plan without payment, or takes it away again; needs the double confirmation. */
-  comp: AdminCompSchema.optional(),
   /** Per-account limit for a single file; null = the default. */
   maxFileBytes: z.number().int().positive().nullable().optional(),
   emailVerified: z.boolean().optional(),
@@ -56,6 +41,11 @@ export const AdminUpdateUserSchema = z.object({
   currentPassword: z.string().min(1).max(1000).optional(),
 });
 export type AdminUpdateUserRequest = z.infer<typeof AdminUpdateUserSchema>;
+
+/** Sets a new password for an account (the way to recover an account on a server without e-mail). */
+export const AdminSetPasswordSchema = AdminReauthSchema.extend({
+  newPassword: z.string().min(10).max(1000),
+});
 
 export const AdminDeleteUserSchema = AdminReauthSchema.extend({
   /** Must equal the account's e-mail address - a guard against deleting the wrong row. */
@@ -102,19 +92,6 @@ export interface AdminUserRow {
   fileCount: number;
   storageBytes: number;
   quotaBytes: number | null;
-  /** The plan the payment system gave this account (null = not billing-managed). */
-  billingState: BillingState;
-  plan: string | null;
-  trialEndsAt: string | null;
-  dataDeleteAt: string | null;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-  /** The quota an administrator forced on this account (null = none; `quotaOverrideUnlimited` = unlimited). */
-  quotaOverrideBytes: number | null;
-  quotaOverrideUnlimited: boolean;
-  /** A plan an administrator gave the account without payment (null = none) and when it ends (null = never). */
-  compedPlan: string | null;
-  compedUntil: string | null;
   maxFileBytes: number;
   maxFileBytesOverride: number | null;
   /** Sessions that are neither revoked nor expired. */
@@ -220,21 +197,6 @@ export const AdminMailQuerySchema = AdminListQuerySchema.extend({
   status: z.enum(["sent", "failed", "skipped"]).optional(),
 });
 
-export interface AdminCapacity {
-  billingEnabled: boolean;
-  /** Configured server budget (null = none). */
-  budgetBytes: number | null;
-  /** Sum of all quotas (unlimited accounts count with their use). */
-  committedBytes: number;
-  /** Real size of everything stored. */
-  usedBytes: number;
-  /** Accounts in trial / read-only that are waiting for a subscription. */
-  trials: number;
-  readOnly: number;
-  /** Accounts whose data is deleted within the next 7 days. */
-  deletingSoon: number;
-}
-
 export interface AdminOverview {
   users: { total: number; admins: number; disabled: number; unverified: number; withTotp: number; active24h: number; new7d: number };
   vaults: { total: number; deleted: number };
@@ -242,7 +204,6 @@ export interface AdminOverview {
   sessions: { active: number };
   live: { connections: number; usersOnline: number; rooms: number; peersInRooms: number };
   settings: AdminSettings;
-  capacity: AdminCapacity;
   /** Mails of the last 24 hours that did not go out. */
   mail: { failed24h: number; skipped24h: number; sent24h: number; smtpConfigured: boolean };
   server: ServerProcessStats;
