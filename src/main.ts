@@ -1,0 +1,438 @@
+import { Notice, Plugin, TFile } from "obsidian";
+import { applyHistoryTexts, t } from "./i18n";
+import { REMOTE_POLL_INTERVAL_MS, toBase64, type MeResponse } from "@websync/shared";
+import { DEFAULT_SETTINGS, type WebSyncSettings } from "./types.js";
+import { AuthClient } from "./sync/AuthClient.js";
+import { RemoteApiClient } from "./sync/RemoteApiClient.js";
+import { CryptoService } from "./sync/CryptoService.js";
+import { VaultLinkManager } from "./sync/VaultLinkManager.js";
+import { FileSystemAdapter } from "./sync/FileSystemAdapter.js";
+import { LocalIndex } from "./sync/LocalIndex.js";
+import { SyncEngine } from "./sync/SyncEngine.js";
+import { ConfigSyncEngine } from "./sync/ConfigSyncEngine.js";
+import { LiveSyncClient } from "./sync/LiveSyncClient.js";
+import { CollabManager } from "./collab/CollabManager.js";
+import { collabCompartment } from "./collab/editorBinding.js";
+import { WebSyncSettingsTab } from "./settings/SettingsTab.js";
+import { WebSyncStatusBar } from "./ui/StatusBar.js";
+import { WebSyncHeaderActions } from "./ui/HeaderActions.js";
+import { ExplorerProgressRings, TransferTracker } from "./ui/TransferProgress.js";
+import { HISTORY_VIEW_TYPE, HistoryView } from "./ui/HistoryView.js";
+import { HISTORY_DIFF_VIEW_TYPE, HistoryDiffView } from "./ui/HistoryDiffView.js";
+
+export default class WebSyncPlugin extends Plugin {
+  settings: WebSyncSettings = DEFAULT_SETTINGS;
+
+  authClient!: AuthClient;
+  remoteApi!: RemoteApiClient;
+  cryptoService!: CryptoService;
+  vaultLinkManager!: VaultLinkManager;
+  fsAdapter!: FileSystemAdapter;
+
+  syncEngine: SyncEngine | null = null;
+  configSyncEngine: ConfigSyncEngine | null = null;
+  localIndex: LocalIndex | null = null;
+  liveSyncClient: LiveSyncClient | null = null;
+  /** Presence + live co-editing on top of the file sync; only exists while sync runs. */
+  collabManager: CollabManager | null = null;
+  /** Updated by LiveSyncClient's onStatusChange - purely informational, read by SettingsTab for the optional "Live-Sync: verbunden/getrennt" indicator. */
+  liveSyncConnected = false;
+  /** The signed-in account with storage numbers and plan state; null until the first answer (or without a session). */
+  account: MeResponse | null = null;
+  private lastAccountLoad = 0;
+  /** Which "can't sync any more" notice was already shown in the current blocked period (shown once, not on every refused file). */
+  private blockedNoticeShown: "read-only" | "storage-full" | null = null;
+  /** Uploads/downloads in flight (explorer progress rings, "syncing" status). */
+  readonly transfers = new TransferTracker();
+
+  private statusBar!: WebSyncStatusBar;
+  private headerActions!: WebSyncHeaderActions;
+  private progressRings!: ExplorerProgressRings;
+
+  async onload(): Promise<void> {
+    applyHistoryTexts(); // the change log (shared with the web app) speaks Obsidian's language
+    await this.loadSettings();
+
+    this.authClient = new AuthClient(() => this.settings.serverUrl);
+    this.remoteApi = new RemoteApiClient(
+      () => this.settings.serverUrl,
+      () => this.settings.sessionToken,
+    );
+    this.cryptoService = new CryptoService();
+    this.vaultLinkManager = new VaultLinkManager(this.remoteApi, this.cryptoService);
+    this.fsAdapter = new FileSystemAdapter(this.app);
+
+    this.addSettingTab(new WebSyncSettingsTab(this.app, this));
+
+    // Every markdown editor gets an (empty) slot the CollabManager fills with
+    // the Yjs binding while a note is co-edited. Must be registered up front.
+    this.registerEditorExtension(collabCompartment.of([]));
+
+    this.statusBar = new WebSyncStatusBar(this);
+    this.statusBar.start();
+
+    // Note header (top right, next to the reading-view toggle): the sync status
+    // icon (with its menu) and the live avatars, on every platform.
+    this.headerActions = new WebSyncHeaderActions(this, this.statusBar);
+    this.statusBar.onRefresh = () => this.headerActions.refresh();
+    this.app.workspace.onLayoutReady(() => this.headerActions.start());
+    this.progressRings = new ExplorerProgressRings(this.app, this.transfers);
+    this.app.workspace.onLayoutReady(() => this.progressRings.start());
+
+    // Version history: a sidebar view (right by default, can be dragged anywhere like any Obsidian view), plus a
+    // main-area view for comparing one version against the current content (opened from a row in the sidebar view).
+    this.registerView(HISTORY_VIEW_TYPE, (leaf) => new HistoryView(leaf, this));
+    this.registerView(HISTORY_DIFF_VIEW_TYPE, (leaf) => new HistoryDiffView(leaf, this));
+    this.app.workspace.onLayoutReady(() => void this.ensureHistoryLeaf());
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFile) || !this.settings.linkedVault) return;
+        menu.addItem((item) =>
+          item
+            .setTitle(t("p.history"))
+            .setIcon("history")
+            .setSection("view")
+            .onClick(() => void this.openHistory(file)),
+        );
+      }),
+    );
+    this.addCommand({
+      id: "websync-file-history",
+      name: t("p.cmd.fileHistory"),
+      callback: () => void this.openHistory(this.app.workspace.getActiveFile()),
+    });
+    this.addCommand({
+      id: "websync-vault-history",
+      name: t("p.cmd.vaultHistory"),
+      callback: () => void this.openHistory(null, true),
+    });
+
+    this.addCommand({
+      id: "websync-sync-now",
+      name: t("p.cmd.syncNow"),
+      callback: () => void this.runManualSync(),
+    });
+
+    // Defer starting sync until Obsidian's own vault index/metadata cache is
+    // fully built - `vault.getFiles()` and vault events are not reliable
+    // before layout-ready fires.
+    this.app.workspace.onLayoutReady(() => {
+      void this.tryStartSync();
+    });
+  }
+
+  onunload(): void {
+    this.stopSync();
+    this.statusBar?.dispose();
+    this.headerActions?.dispose();
+    this.progressRings?.dispose();
+  }
+
+  /**
+   * Re-reads the account (storage used / quota, trial, read-only). Cheap, so it runs after syncs and on a timer;
+   * `force` skips the small throttle (used right after the server refused a write). Never throws.
+   */
+  async refreshAccount(force = false): Promise<void> {
+    if (!this.settings.sessionToken || !this.settings.serverUrl) {
+      if (this.account) {
+        this.account = null;
+        this.statusBar?.refresh();
+      }
+      return;
+    }
+    if (!force && Date.now() - this.lastAccountLoad < 10_000) return;
+    this.lastAccountLoad = Date.now();
+    try {
+      const account = await this.remoteApi.getMe();
+      const wasBlocked = this.writeBlockReason() !== null;
+      const changed = JSON.stringify([account.storageUsedBytes, account.storageQuotaBytes, account.readOnly]) !== JSON.stringify([this.account?.storageUsedBytes, this.account?.storageQuotaBytes, this.account?.readOnly]);
+      this.account = account;
+      if (changed) this.statusBar?.refresh();
+      const reason = this.writeBlockReason();
+      if (reason) this.notifyWriteBlocked(reason);
+      else if (wasBlocked) {
+        // Room again (files deleted, plan bought): forget the notice and upload what was skipped meanwhile.
+        this.blockedNoticeShown = null;
+        void this.syncEngine?.runFullSync().catch((err) => console.error("WebSync: Sync nach Freigabe fehlgeschlagen", err));
+      }
+    } catch {
+      // Offline or the server is busy: keep what we knew.
+    }
+  }
+
+  /** Why changes can't be synced right now (null = they can). */
+  writeBlockReason(): "read-only" | "storage-full" | null {
+    const account = this.account;
+    if (!account) return null;
+    if (account.readOnly) return "read-only";
+    if (account.storageQuotaBytes && account.storageUsedBytes >= account.storageQuotaBytes) return "storage-full";
+    return null;
+  }
+
+  /** One visible message per blocked period (with a link to the plan page), so it is not only a small icon. */
+  notifyWriteBlocked(reason: "read-only" | "storage-full"): void {
+    if (this.blockedNoticeShown === reason) return;
+    this.blockedNoticeShown = reason;
+    const message = document.createDocumentFragment();
+    message.append(t(reason === "read-only" ? "p.notice.readOnly" : "p.notice.storageFull"));
+    const webUrl = this.account?.webUrl;
+    if (webUrl && this.account?.billingState !== "unmanaged") {
+      message.append(" ");
+      const link = document.createElement("a");
+      link.textContent = t("p.openPlan");
+      link.href = `${webUrl.replace(/\/+$/, "")}/account/billing`;
+      link.target = "_blank";
+      message.append(link);
+    }
+    new Notice(message, 20_000);
+  }
+
+  async loadSettings(): Promise<void> {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
+
+  /**
+   * (Re)starts the sync engine if we're logged in, a vault is linked, and
+   * the crypto service can be unlocked (either it already is, or a cached
+   * key is available). Called on load, and again after login/logout,
+   * link/unlink, and unlock actions from the settings tab. Safe to call
+   * repeatedly - always stops any previous engine first.
+   */
+  async tryStartSync(): Promise<void> {
+    this.stopSync();
+    if (!this.settings.sessionToken || !this.settings.linkedVault) return;
+
+    if (!this.cryptoService.isUnlocked()) {
+      const remembered = await this.tryUnlockFromCache();
+      if (!remembered) {
+        // No cached key and no passphrase available right now - the user
+        // has to unlock via the settings tab before sync can run.
+        this.statusBar?.refresh();
+        return;
+      }
+    }
+
+    const linkedVault = this.settings.linkedVault;
+    const localIndex = new LocalIndex(linkedVault.vaultId);
+    await localIndex.open();
+    this.localIndex = localIndex;
+
+    const configDirPrefix = `${this.app.vault.configDir}/`;
+    const syncEngine = new SyncEngine({
+      vaultId: linkedVault.vaultId,
+      crypto: this.cryptoService,
+      remote: this.remoteApi,
+      fs: this.fsAdapter,
+      localIndex,
+      isPaused: () => this.settings.syncPaused,
+      isConfigPath: (path) => path.startsWith(configDirPrefix),
+      isCollabLive: (fileId) => this.collabManager?.isLive(fileId) ?? false,
+      transfers: this.transfers,
+      initialGlobalVersion: linkedVault.lastSyncedGlobalVersion,
+      onStateChange: async (state) => {
+        this.settings.lastSyncAt = state.lastSyncAt;
+        if (this.settings.linkedVault) {
+          this.settings.linkedVault.lastSyncedGlobalVersion = state.globalVersion;
+        }
+        await this.saveSettings();
+        void this.refreshAccount();
+      },
+      isReadOnly: () => this.account?.readOnly === true,
+      onWriteRefused: (reason) => {
+        this.notifyWriteBlocked(reason);
+        void this.refreshAccount(true);
+      },
+    });
+    this.syncEngine = syncEngine;
+
+    this.configSyncEngine = new ConfigSyncEngine({
+      app: this.app,
+      vaultId: linkedVault.vaultId,
+      pluginDir: this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
+      crypto: this.cryptoService,
+      remote: this.remoteApi,
+      getSettings: () => this.settings.configSync,
+      onLastVersionChange: async (version) => {
+        this.settings.configSync.lastSyncedGlobalVersion = version;
+        await this.saveSettings();
+      },
+    });
+
+    this.registerEvent(this.app.vault.on("create", (file) => syncEngine.handleLocalEvent("create", file)));
+    this.registerEvent(this.app.vault.on("modify", (file) => syncEngine.handleLocalEvent("modify", file)));
+    this.registerEvent(this.app.vault.on("delete", (file) => syncEngine.handleLocalEvent("delete", file)));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => syncEngine.handleLocalRename(file, oldPath)));
+
+    // Switching away from a note ends its "still editing" history session (see SyncEngine.touchEditSession): the next
+    // edit to it, even moments later, gets its own history entry instead of amending the last one.
+    let lastActiveNotePath = this.app.workspace.getActiveFile()?.path ?? null;
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        const newPath = file?.path ?? null;
+        const previousPath = lastActiveNotePath;
+        lastActiveNotePath = newPath;
+        if (previousPath && previousPath !== newPath) {
+          void localIndex.getByPath(previousPath).then((record) => record && syncEngine.endEditSession(record.fileId));
+        }
+      }),
+    );
+
+    try {
+      await syncEngine.runFullSync();
+    } catch (err) {
+      console.error("WebSync: initialer Full-Sync fehlgeschlagen", err);
+      new Notice(t("p.syncFailed", { error: (err as Error).message }));
+    }
+    try {
+      await this.configSyncEngine.run();
+    } catch (err) {
+      console.error("WebSync: initialer Einstellungs-Sync fehlgeschlagen", err);
+    }
+
+    this.registerInterval(window.setInterval(() => this.pollNow(), REMOTE_POLL_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => void this.refreshAccount(), 2 * 60 * 1000));
+    void this.refreshAccount(true);
+
+    // Live-push channel: the 30s interval above keeps running as a fallback
+    // safety net regardless, but this makes changes from other devices show
+    // up in ~1s instead of up to 30s by triggering an immediate extra poll
+    // whenever the server says the vault changed. A dropped/failed
+    // connection just falls back to relying on the interval alone - see
+    // LiveSyncClient's own reconnect-with-backoff handling.
+    if (this.settings.sessionToken) {
+      // Live collaboration rides on the same socket; the manager exists
+      // before the client so its callbacks are ready when the socket opens.
+      const collabManager = new CollabManager({
+        app: this.app,
+        crypto: this.cryptoService,
+        send: (message) => this.liveSyncClient?.send(message) ?? false,
+        getFileId: async (path) => {
+          try {
+            return (await localIndex.getByPath(path))?.fileId ?? null;
+          } catch {
+            return null; // index closed while shutting down
+          }
+        },
+        isTextSynced: async (path, text) => {
+          const record = await localIndex.getByPath(path);
+          if (!record) return false;
+          const hash = await this.cryptoService.hashContent(new TextEncoder().encode(text));
+          return toBase64(hash) === record.lastContentHashBlinded;
+        },
+        isEnabled: () => this.settings.collabEnabled && !this.settings.syncPaused,
+        onPresenceChange: () => this.headerActions?.refresh(),
+      });
+      this.collabManager = collabManager;
+
+      this.liveSyncClient = new LiveSyncClient(
+        this.settings.serverUrl,
+        this.settings.sessionToken,
+        linkedVault.vaultId,
+        () => this.pollNow(),
+        (connected) => {
+          this.liveSyncConnected = connected;
+          if (connected) collabManager.handleConnected();
+          else collabManager.handleDisconnected();
+          this.statusBar?.refresh();
+        },
+        (message) => collabManager.handleServerMessage(message),
+        () => new Notice(t("session.ended"), 15_000),
+      );
+    }
+    this.statusBar?.refresh();
+    for (const leaf of this.app.workspace.getLeavesOfType(HISTORY_VIEW_TYPE)) {
+      if (leaf.view instanceof HistoryView) leaf.view.refresh();
+    }
+  }
+
+  /** Puts the history view into the right sidebar once (as a tab next to backlinks etc.), without focusing it. */
+  private async ensureHistoryLeaf(): Promise<void> {
+    if (this.app.workspace.getLeavesOfType(HISTORY_VIEW_TYPE).length > 0) return;
+    await this.app.workspace.getRightLeaf(false)?.setViewState({ type: HISTORY_VIEW_TYPE, active: false });
+  }
+
+  /** Reveals the history view wherever the user docked it and shows `file` (or the vault's change log). */
+  async openHistory(file: TFile | null, vault = false): Promise<void> {
+    await this.ensureHistoryLeaf();
+    const leaf = this.app.workspace.getLeavesOfType(HISTORY_VIEW_TYPE)[0];
+    if (!leaf) return;
+    await this.app.workspace.revealLeaf(leaf);
+    const view = leaf.view;
+    if (!(view instanceof HistoryView)) return;
+    if (vault) await view.showVault();
+    else await view.showFile(file);
+  }
+
+  /** Opens (or updates) the main-area diff tab comparing `revisionId` of `fileId` against the current content. */
+  async openRevisionDiff(fileId: string, revisionId: string): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(HISTORY_DIFF_VIEW_TYPE)[0];
+    const leaf = existing ?? this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: HISTORY_DIFF_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof HistoryDiffView) await leaf.view.setTarget(fileId, revisionId);
+  }
+
+  /** Shared by the periodic poll interval and the LiveSyncClient's push trigger (and a restore from the history view). */
+  pollNow(): void {
+    if (this.settings.syncPaused) return;
+    void this.syncEngine?.runIncrementalPoll().catch((err) => {
+      console.error("WebSync: Remote-Polling fehlgeschlagen", err);
+    });
+    void this.configSyncEngine?.run().catch((err) => {
+      console.error("WebSync: Einstellungs-Sync fehlgeschlagen", err);
+    });
+  }
+
+  /** Called from the settings tab when collaboration is switched on/off (or sync is paused/resumed). */
+  refreshCollab(): void {
+    this.collabManager?.requestRefresh();
+  }
+
+  private stopSync(): void {
+    this.collabManager?.dispose();
+    this.collabManager = null;
+    this.liveSyncClient?.dispose();
+    this.liveSyncClient = null;
+    this.liveSyncConnected = false;
+    this.syncEngine?.dispose();
+    this.syncEngine = null;
+    this.configSyncEngine = null;
+    this.localIndex?.close();
+    this.localIndex = null;
+    this.statusBar?.refresh();
+  }
+
+  async runManualSync(): Promise<void> {
+    if (!this.syncEngine) {
+      new Notice(t("p.noVaultOrPaused"));
+      return;
+    }
+    new Notice(t("p.syncStarted"));
+    this.statusBar?.refresh();
+    try {
+      await this.syncEngine.runFullSync();
+      await this.configSyncEngine?.run();
+      new Notice(t("p.syncDone"));
+    } catch (err) {
+      console.error("WebSync: Synchronisierung fehlgeschlagen", err);
+      new Notice(t("p.syncFailed", { error: (err as Error).message }));
+    }
+    this.statusBar?.refresh();
+  }
+
+  /** Tries to unlock the crypto service from cached root bits in data.json (see CryptoService.ts for what these are). */
+  private async tryUnlockFromCache(): Promise<boolean> {
+    if (!this.settings.rememberKey || !this.settings.cachedKeyMaterial) return false;
+    try {
+      await this.cryptoService.unlockWithCachedRootBits(this.settings.cachedKeyMaterial.rootBitsBase64);
+      return true;
+    } catch (err) {
+      console.error("WebSync: gecachter Schlüssel konnte nicht verwendet werden", err);
+      return false;
+    }
+  }
+}

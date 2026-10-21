@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+# build artifact - attached to GitHub Releases, not committed
+main.js
+# per-vault plugin settings (session token, key material) - never commit
+data.json
+.env
+*.log
+.DS_Store

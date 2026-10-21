@@ -1,0 +1,33 @@
+{
+  "name": "websync-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end encrypted vault sync with your own WebSync server.",
+  "packageManager": "pnpm@12.4.2",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit && pnpm --filter @websync/shared typecheck",
+    "lint": "eslint src",
+    "test": "pnpm --filter @websync/shared test",
+    "sync-shared": "bash scripts/sync-shared.sh"
+  },
+  "dependencies": {
+    "@websync/shared": "workspace:*",
+    "y-codemirror.next": "^0.3.6",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32"
+  },
+  "devDependencies": {
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
+    "@types/node": "^22.7.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.23.1",
+    "eslint": "^9.10.0",
+    "obsidian": "latest",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.7.0"
+  }
+}
