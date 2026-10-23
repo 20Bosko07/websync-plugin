@@ -14,7 +14,7 @@
  * touched when the rendered result actually changes.
  */
 import { t } from "../i18n/index.js";
-import { FileView, MarkdownView, Menu, setIcon, setTooltip } from "obsidian";
+import { FileView, ItemView, MarkdownView, Menu, setIcon, setTooltip } from "obsidian";
 import type WebSyncPlugin from "../main.js";
 import type { CollabPresence } from "../collab/CollabManager.js";
 import { describeStatus, type WebSyncStatusBar } from "./StatusBar.js";
@@ -29,7 +29,7 @@ interface HeaderAction {
 }
 
 export class WebSyncHeaderActions {
-  private readonly actions = new Map<FileView, HeaderAction>();
+  private readonly actions = new Map<ItemView, HeaderAction>();
   private timer: ReturnType<typeof window.setInterval> | null = null;
 
   constructor(
@@ -57,11 +57,12 @@ export class WebSyncHeaderActions {
   }
 
   refresh(): void {
-    const seen = new Set<FileView>();
+    const seen = new Set<ItemView>();
     this.plugin.app.workspace.iterateRootLeaves((leaf) => {
       const view = leaf.view;
-      // Note/canvas/PDF/image tabs; not the empty "new tab" page or non-file views.
-      if (!(view instanceof FileView)) return;
+      // Note/canvas/PDF/image tabs and the empty "new tab" page (no file open: the sync status is still wanted there,
+      // next to the "..." menu); other views have their own headers.
+      if (!(view instanceof FileView) && !isEmptyView(view)) return;
       seen.add(view);
       let action = this.actions.get(view);
       if (!action) {
@@ -79,12 +80,12 @@ export class WebSyncHeaderActions {
     }
   }
 
-  private presenceOf(view: FileView): CollabPresence[] | null {
+  private presenceOf(view: ItemView): CollabPresence[] | null {
     if (!(view instanceof MarkdownView) || !view.file) return null;
     return this.plugin.collabManager?.presenceFor(view.file.path) ?? null;
   }
 
-  private render(view: FileView, action: HeaderAction): void {
+  private render(view: ItemView, action: HeaderAction): void {
     const { el } = action;
     const presence = this.presenceOf(view);
     const status = this.statusBar.computeStatus();
@@ -117,7 +118,7 @@ export class WebSyncHeaderActions {
     setTooltip(el, tooltip, { placement: "bottom" });
   }
 
-  private onClick(evt: MouseEvent, view: FileView): void {
+  private onClick(evt: MouseEvent, view: ItemView): void {
     const presence = this.presenceOf(view);
     this.statusBar.openMenu(evt, (menu: Menu) => {
       if (!presence || presence.length === 0) return;
@@ -128,6 +129,11 @@ export class WebSyncHeaderActions {
       menu.addSeparator();
     });
   }
+}
+
+/** The "new tab" page shown while a tab has no file open. */
+function isEmptyView(view: unknown): view is ItemView {
+  return view instanceof ItemView && view.getViewType() === "empty";
 }
 
 /** First visible character of the device name, for the avatar. */
