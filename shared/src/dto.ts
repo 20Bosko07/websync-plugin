@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BILLING_STATES } from "./billing";
-import { CLIENT_TYPES, COLLAB_MAX_RELAY_BASE64_LENGTH, LOCALES, TWO_FACTOR_METHODS } from "./constants";
+import { CLIENT_TYPES, COLLAB_MAX_RELAY_BASE64_LENGTH, LOCALES, MIN_PASSWORD_LENGTH, TWO_FACTOR_METHODS } from "./constants";
 
 // --- Auth ---
 
@@ -10,7 +10,7 @@ export const UsernameSchema = z.string().trim().regex(USERNAME_PATTERN);
 
 export const RegisterRequestSchema = z.object({
   username: UsernameSchema,
-  password: z.string().min(10),
+  password: z.string().min(MIN_PASSWORD_LENGTH),
 });
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 
@@ -550,12 +550,12 @@ export const SetupRequestSchema = z.object({
   /** The one-time token the server printed to its log at start-up. */
   setupToken: z.string().min(1).max(200),
   username: UsernameSchema,
-  password: z.string().min(10).max(1000),
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
 });
 export type SetupRequest = z.infer<typeof SetupRequestSchema>;
 
 export const ChangePasswordRequestSchema = z.object({
   currentPassword: z.string().min(1).max(1000),
-  newPassword: z.string().min(10).max(1000),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
 });
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;

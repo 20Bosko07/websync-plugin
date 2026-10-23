@@ -6,6 +6,9 @@ export const LOCALES = ["en", "de", "fr", "es", "it", "nl"] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 
+/** Shortest account password the server accepts (registration, setup, password changes, admin / CLI resets). */
+export const MIN_PASSWORD_LENGTH = 7;
+
 /** Share of the storage quota at which the account gets a warning (banner). */
 export const STORAGE_WARNING_RATIO = 0.8;
 

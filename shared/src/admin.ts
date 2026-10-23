@@ -3,6 +3,7 @@
  * Request bodies are zod schemas (validated by the server); responses are plain interfaces.
  */
 import { z } from "zod";
+import { MIN_PASSWORD_LENGTH } from "./constants";
 import { UsernameSchema } from "./dto";
 
 export const USER_ROLES = ["user", "admin"] as const;
@@ -24,7 +25,7 @@ export const AdminReauthSchema = z.object({
 
 export const AdminCreateUserSchema = AdminReauthSchema.extend({
   username: UsernameSchema,
-  password: z.string().min(10).max(1000),
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
   role: z.enum(USER_ROLES).default("user"),
   quotaBytes: z.number().int().positive().nullable().optional(),
 });
@@ -44,7 +45,7 @@ export type AdminUpdateUserRequest = z.infer<typeof AdminUpdateUserSchema>;
 
 /** Sets a new password for an account (the way to recover an account whose password was forgotten). */
 export const AdminSetPasswordSchema = AdminReauthSchema.extend({
-  newPassword: z.string().min(10).max(1000),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
 });
 
 export const AdminDeleteUserSchema = AdminReauthSchema.extend({
