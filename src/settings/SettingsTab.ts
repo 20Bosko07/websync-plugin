@@ -131,7 +131,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     if (this.plugin.settings.sessionToken) {
       new Setting(containerEl)
         .setName(t("p.signedIn"))
-        .setDesc(this.plugin.settings.accountEmail ?? "")
+        .setDesc(this.plugin.settings.accountUsername ?? "")
         .addButton((btn) =>
           btn.setButtonText(t("p.signOut")).onClick(() => {
             void this.logout();
@@ -385,7 +385,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
 
     try {
       const me = await this.plugin.authClient.getMe(sessionToken);
-      this.plugin.settings.accountEmail = me.email;
+      this.plugin.settings.accountUsername = me.username;
       await this.plugin.saveSettings();
     } catch (err) {
       console.error("WebSync: Kontoinformationen konnten nicht geladen werden", err);
@@ -421,7 +421,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     }
     this.plugin.settings.sessionToken = null;
     this.plugin.settings.sessionExpiresAt = null;
-    this.plugin.settings.accountEmail = null;
+    this.plugin.settings.accountUsername = null;
     this.pendingUnlockVaultId = null;
     this.pairingState = "idle";
     await this.plugin.saveSettings();

@@ -9,7 +9,7 @@ import { apiRequest } from "./httpClient.js";
  * settings and passes it back in for authenticated calls (logout, getMe).
  *
  * Login is device-pairing based (like `gh auth login --web`), not manual
- * email/password/2FA entry: `startDeviceAuth` asks the server for a short
+ * username/password/2FA entry: `startDeviceAuth` asks the server for a short
  * pairing code + a browser URL, and `pollDeviceAuth` is polled until the
  * user approves (or denies/lets it expire) on the web panel, where they're
  * already logged in and also pick which vault to link. See SettingsTab.ts
@@ -34,14 +34,6 @@ export class AuthClient {
     if (server === undefined || server === PROTOCOL_VERSION) return;
     const which = server > PROTOCOL_VERSION ? t("p.protocolPlugin") : t("p.protocolServer");
     throw new Error(t("p.protocolMismatch", { server, plugin: PROTOCOL_VERSION, which }));
-  }
-
-  async register(email: string, password: string): Promise<void> {
-    await apiRequest<void>(this.serverUrl, {
-      method: "POST",
-      path: "/auth/register",
-      json: { email, password },
-    });
   }
 
   /**

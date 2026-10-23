@@ -1,12 +1,12 @@
 export const PBKDF2_ITERATIONS_DEFAULT = 210_000;
 export const KDF_ALGO_PBKDF2_SHA256 = "pbkdf2-sha256" as const;
 
-/** UI / e-mail languages. The first one is the default for anybody who has not picked (or whose browser asks for another). */
+/** UI languages. The first one is the default for anybody who has not picked (or whose browser asks for another). */
 export const LOCALES = ["en", "de", "fr", "es", "it", "nl"] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 
-/** Share of the storage quota at which the account gets a warning (banner + one e-mail). */
+/** Share of the storage quota at which the account gets a warning (banner). */
 export const STORAGE_WARNING_RATIO = 0.8;
 
 export const SESSION_TOKEN_HEADER = "authorization";
@@ -15,7 +15,7 @@ export const SESSION_TOKEN_PREFIX = "Bearer ";
 export const CLIENT_TYPES = ["web", "plugin-desktop", "plugin-mobile"] as const;
 export type ClientType = (typeof CLIENT_TYPES)[number];
 
-export const TWO_FACTOR_METHODS = ["totp", "email", "passkey"] as const;
+export const TWO_FACTOR_METHODS = ["totp", "passkey"] as const;
 export type TwoFactorMethod = (typeof TWO_FACTOR_METHODS)[number];
 
 /** Debounce window before a locally changed file is pushed to the server. */

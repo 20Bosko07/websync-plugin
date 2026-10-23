@@ -4,14 +4,19 @@ import { CLIENT_TYPES, COLLAB_MAX_RELAY_BASE64_LENGTH, LOCALES, TWO_FACTOR_METHO
 
 // --- Auth ---
 
+/** Login names: 3-32 characters, letters / digits / `.` `_` `-`, starting with a letter or digit. Case-insensitive. */
+export const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
+export const UsernameSchema = z.string().trim().regex(USERNAME_PATTERN);
+
 export const RegisterRequestSchema = z.object({
-  email: z.string().email(),
+  username: UsernameSchema,
   password: z.string().min(10),
 });
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 
 export const LoginRequestSchema = z.object({
-  email: z.string().email(),
+  // Not held to USERNAME_PATTERN: only the name when the account was made counts, and a wrong one is simply "no such account".
+  username: z.string().trim().min(1).max(100),
   password: z.string().min(1),
   clientType: z.enum(CLIENT_TYPES),
   deviceName: z.string().min(1).max(100),
@@ -23,14 +28,12 @@ export const LoginResponseSchema = z.object({
   method: z.enum(TWO_FACTOR_METHODS),
   /** Every second factor this account can use right now; the login page offers the ones besides `method` as a switch. */
   availableMethods: z.array(z.enum(TWO_FACTOR_METHODS)).min(1),
-  /** False while the e-mail code is held back because the account has other second factors the user may prefer. */
-  emailCodeSent: z.boolean(),
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
 /**
- * Result of `POST /auth/login`: a second factor is still needed (`LoginResponse`), or - on a server without e-mail and
- * for an account without authenticator / passkey - the password alone was enough and the session is issued right away.
+ * Result of `POST /auth/login`: a second factor is still needed (`LoginResponse`), or - for an account without
+ * authenticator / passkey - the password alone was enough and the session is issued right away.
  */
 export type LoginResult = LoginResponse | SessionTokenResponse;
 export function loginFinished(result: LoginResult): result is SessionTokenResponse {
@@ -77,26 +80,12 @@ export const TotpDisableRequestSchema = z.object({
 });
 export type TotpDisableRequest = z.infer<typeof TotpDisableRequestSchema>;
 
-export const ForgotPasswordRequestSchema = z.object({
-  email: z.string().email(),
-});
-export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordRequestSchema>;
-
-export const ResetPasswordRequestSchema = z.object({
-  token: z.string(),
-  newPassword: z.string().min(10),
-});
-export type ResetPasswordRequest = z.infer<typeof ResetPasswordRequestSchema>;
-
 export const MeResponseSchema = z.object({
   id: z.string().uuid(),
-  email: z.string().email(),
-  emailVerified: z.boolean(),
+  username: z.string(),
   totpEnabled: z.boolean(),
   /** Second factor asked for first at login; the other one (if set up) stays available as a switch. */
-  preferredTwoFactor: z.enum(TWO_FACTOR_METHODS).default("email"),
-  /** Set once the user has seen the "set up an authenticator?" offer (set up or skipped) - it is never shown again. */
-  totpOfferHandled: z.boolean().default(true),
+  preferredTwoFactor: z.enum(TWO_FACTOR_METHODS).default("totp"),
   /** Only ever informational for the UI - the server checks the role itself on every admin request. */
   role: z.enum(["user", "admin"]).default("user"),
   /** Summed size of the user's live files and the account's limit (null = unlimited) - drives the "almost full" banner. */
@@ -113,7 +102,7 @@ export const MeResponseSchema = z.object({
   dataDeleteAt: z.string().nullable().default(null),
   /** Address of the web app (plan page links from the plugin). */
   webUrl: z.string().nullable().default(null),
-  /** Chosen UI / e-mail language; null until the user picks one. */
+  /** Chosen UI language; null until the user picks one. */
   locale: z.enum(LOCALES).nullable().default(null),
   /** Number of registered passkeys (a passkey counts as a second factor at login). */
   passkeyCount: z.number().int().nonnegative().default(0),
@@ -288,7 +277,7 @@ export const VaultListItemSchema = z.object({
   /** `member` = somebody else's vault that was shared with the caller (see "Vault sharing" below). */
   role: z.enum(["owner", "member"]).default("owner"),
   /** Set for shared vaults: who owns it. */
-  ownerEmail: z.string().nullable().default(null),
+  ownerUsername: z.string().nullable().default(null),
 });
 export type VaultListItem = z.infer<typeof VaultListItemSchema>;
 
@@ -323,20 +312,19 @@ export type VaultDetail = z.infer<typeof VaultDetailSchema>;
 // The key never passes through the server in the clear - see the "Vault sharing" comment in crypto.ts.
 
 /**
- * `POST /vaults/:id/invites` (owner). `wrappedKey` = base64 of `wrapRootBitsForInvite`. `inviteSecret` is what opens it: the
- * server puts it into the fragment of the join link in the invitation mail and neither stores nor logs it.
+ * `POST /vaults/:id/invites` (owner). `wrappedKey` = base64 of `wrapRootBitsForInvite`. The secret that opens it (the
+ * invitation code) never reaches the server: the owner passes it on to the invitee themselves.
  */
 export const CreateInviteRequestSchema = z.object({
-  email: z.string().trim().email().max(254),
+  username: UsernameSchema,
   wrappedKey: z.string().min(1).max(4096),
-  inviteSecret: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),
 });
 export type CreateInviteRequest = z.infer<typeof CreateInviteRequestSchema>;
 
 /** What the owner sees about an invitation that has not been accepted yet. */
 export const InviteItemSchema = z.object({
   id: z.string().uuid(),
-  email: z.string(),
+  username: z.string(),
   createdAt: z.string(),
   expiresAt: z.string(),
 });
@@ -344,7 +332,7 @@ export type InviteItem = z.infer<typeof InviteItemSchema>;
 
 export const VaultMemberItemSchema = z.object({
   userId: z.string().uuid(),
-  email: z.string(),
+  username: z.string(),
   joinedAt: z.string(),
 });
 export type VaultMemberItem = z.infer<typeof VaultMemberItemSchema>;
@@ -360,12 +348,12 @@ export type VaultSharing = z.infer<typeof VaultSharingSchema>;
 export const IncomingInviteSchema = z.object({
   id: z.string().uuid(),
   vaultName: z.string(),
-  ownerEmail: z.string(),
+  ownerUsername: z.string(),
   expiresAt: z.string(),
 });
 export type IncomingInvite = z.infer<typeof IncomingInviteSchema>;
 
-/** `GET /invites/:id`: everything the invitee's browser needs to unwrap the key with the invite secret from the link and check it. */
+/** `GET /invites/:id`: everything the invitee's browser needs to unwrap the key with the invitation code and check it. */
 export const InvitePreviewSchema = IncomingInviteSchema.extend({
   vaultId: z.string().uuid(),
   wrappedKey: z.string(), // base64
@@ -460,8 +448,8 @@ export const FileRevisionItemSchema = z.object({
   /** False when the content of this version was not kept (too large, or already pruned) - it cannot be restored. */
   hasContent: z.boolean(),
   deviceName: z.string().nullable(),
-  /** E-mail of the account that made the change (null once the account is gone). */
-  userEmail: z.string().nullable(),
+  /** Username of the account that made the change (null once the account is gone). */
+  username: z.string().nullable(),
   createdAt: z.string(),
 });
 export type FileRevisionItem = z.infer<typeof FileRevisionItemSchema>;
@@ -554,8 +542,6 @@ export type PasskeyLoginVerifyRequest = z.infer<typeof PasskeyLoginVerifyRequest
 export interface PublicConfig {
   /** No account exists yet: the first-run setup page must be shown. */
   needsSetup: boolean;
-  /** The server can send e-mail. Without it there is no e-mail verification, no e-mail codes and no "forgot password". */
-  mailEnabled: boolean;
   registrationOpen: boolean;
   protocolVersion: number;
 }
@@ -563,7 +549,7 @@ export interface PublicConfig {
 export const SetupRequestSchema = z.object({
   /** The one-time token the server printed to its log at start-up. */
   setupToken: z.string().min(1).max(200),
-  email: z.string().email(),
+  username: UsernameSchema,
   password: z.string().min(10).max(1000),
 });
 export type SetupRequest = z.infer<typeof SetupRequestSchema>;
