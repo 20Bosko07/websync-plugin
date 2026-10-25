@@ -64,6 +64,12 @@ export interface ConfigSyncSettings {
    * choice to exclude it by default.
    */
   workspace: boolean;
+  /**
+   * What this device last agreed on with the server, per setting file (key `<vaultId>|<path>`, value the blinded content
+   * hash). It tells apart "I changed it" from "the server changed it" - and a file this device has never reconciled before
+   * (a new device with default settings) is not in it: there the server's version is taken over, never overwritten.
+   */
+  known: Record<string, string>;
   /** This device's last-applied vault-wide version for config files specifically - a separate cursor from `linkedVault.lastSyncedGlobalVersion`, since the two engines poll independently. */
   lastSyncedGlobalVersion: number;
 }
@@ -133,6 +139,7 @@ export const DEFAULT_SETTINGS: WebSyncSettings = {
     snippets: true,
     hotkeys: true,
     workspace: false,
+    known: {},
     lastSyncedGlobalVersion: 0,
   },
 };

@@ -401,6 +401,12 @@ export default class WebSyncPlugin extends Plugin {
           const hash = await this.cryptoService.hashContent(new TextEncoder().encode(text));
           return toBase64(hash) === record.lastContentHashBlinded;
         },
+        mergeBase: async (path) => {
+          const record = await localIndex.getByPath(path);
+          if (!record) return null;
+          const base = await localIndex.getBase(record.fileId).catch(() => undefined);
+          return base && base.hash === record.lastContentHashBlinded ? base.text : null;
+        },
         isEnabled: () => this.settings.collabEnabled && !this.settings.syncPaused,
         onPresenceChange: () => this.headerActions?.refresh(),
       });

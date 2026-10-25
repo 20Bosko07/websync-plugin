@@ -35,7 +35,7 @@ import type { ConfigSyncSettings } from "../types.js";
 import type { CryptoService } from "./CryptoService.js";
 import type { DecodedFileListItem, RemoteApiClient } from "./RemoteApiClient.js";
 
-type ConfigCategory = Exclude<keyof ConfigSyncSettings, "enabled" | "lastSyncedGlobalVersion">;
+type ConfigCategory = Exclude<keyof ConfigSyncSettings, "enabled" | "lastSyncedGlobalVersion" | "known">;
 
 export interface ConfigSyncEngineDeps {
   app: App;
@@ -105,7 +105,20 @@ export class ConfigSyncEngine {
     }
   }
 
+  private knownKey(path: string): string {
+    return `${this.deps.vaultId}|${path}`;
+  }
+
+  private remember(settings: ConfigSyncSettings, path: string, hash: Uint8Array): void {
+    settings.known[this.knownKey(path)] = toBase64(hash);
+  }
+
+  private forget(settings: ConfigSyncSettings, path: string): void {
+    delete settings.known[this.knownKey(path)];
+  }
+
   private async reconcile(settings: ConfigSyncSettings): Promise<void> {
+    settings.known ??= {};
     const roots = categoryRoots(this.configDir);
     const enabledRootPaths = (Object.keys(roots) as ConfigCategory[])
       .filter((cat) => settings[cat])
@@ -142,20 +155,25 @@ export class ConfigSyncEngine {
         const local = localFiles.get(path);
         if (!local) {
           this.reconciledMtimes.delete(path);
+          this.forget(settings, path);
           continue;
         }
+        // Never agreed on this file with the server: a deletion there is not ours to apply (nor is the file ours to push).
+        if (settings.known[this.knownKey(path)] === undefined) continue;
         const localMtime = await this.statMtime(path);
         if (this.isRemoteNewer(item.updatedAt, localMtime)) {
           await this.deps.app.vault.adapter.remove(path).catch(() => undefined);
           this.reconciledMtimes.delete(path);
+          this.forget(settings, path);
         } else {
-          await this.uploadPath(path);
+          const hash = await this.uploadPath(path);
+          if (hash) this.remember(settings, path, hash);
           this.reconciledMtimes.set(path, local.mtime);
         }
         continue;
       }
 
-      await this.reconcilePath(path, item, localFiles.get(path));
+      await this.reconcilePath(settings, path, item, localFiles.get(path));
     }
 
     for (const [path, { mtime }] of localFiles) {
@@ -163,7 +181,8 @@ export class ConfigSyncEngine {
       // Not in the remote list. On a full list that means the server does not have it; on a delta it only means it did
       // not change remotely, so upload it only if it changed here since it was last reconciled.
       if (!fullList && this.reconciledMtimes.get(path) === mtime) continue;
-      await this.uploadPath(path);
+      const hash = await this.uploadPath(path);
+      if (hash) this.remember(settings, path, hash);
       this.reconciledMtimes.set(path, mtime);
     }
 
@@ -173,29 +192,47 @@ export class ConfigSyncEngine {
     await this.deps.onLastVersionChange(newVersion);
   }
 
-  private async reconcilePath(path: string, item: DecodedFileListItem, local: { mtime: number } | undefined): Promise<void> {
+  private async reconcilePath(
+    settings: ConfigSyncSettings,
+    path: string,
+    item: DecodedFileListItem,
+    local: { mtime: number } | undefined,
+  ): Promise<void> {
+    const remoteHash = toBase64(item.contentHashBlinded);
     if (!local) {
-      await this.downloadPath(path, item);
+      if (await this.downloadPath(path, item)) settings.known[this.knownKey(path)] = remoteHash;
       return;
     }
 
     const localBytes = await this.deps.app.vault.adapter.readBinary(path).then((b) => new Uint8Array(b));
     const localHash = await this.deps.crypto.hashContent(localBytes);
-    if (toBase64(localHash) === toBase64(item.contentHashBlinded)) {
+    const localB64 = toBase64(localHash);
+    if (localB64 === remoteHash) {
+      settings.known[this.knownKey(path)] = remoteHash;
       this.reconciledMtimes.set(path, local.mtime); // already in sync
       return;
     }
 
-    const localMtime = await this.statMtime(path);
-    if (this.isRemoteNewer(item.updatedAt, localMtime)) {
-      await this.downloadPath(path, item);
+    // `baseline` is what this device and the server last agreed on. With it the side that changed since then is clear,
+    // regardless of file times; without it (first contact, e.g. a new device that still has default settings) the
+    // server's version is adopted rather than a fresh device overwriting the real settings because its files are newer.
+    const baseline = settings.known[this.knownKey(path)];
+    let download: boolean;
+    if (baseline === undefined) download = true;
+    else if (baseline === remoteHash) download = false;
+    else if (baseline === localB64) download = true;
+    else download = this.isRemoteNewer(item.updatedAt, await this.statMtime(path));
+
+    if (download) {
+      if (await this.downloadPath(path, item)) settings.known[this.knownKey(path)] = remoteHash;
     } else {
-      await this.uploadPath(path, localBytes, localHash);
+      const hash = await this.uploadPath(path, localBytes, localHash);
+      if (hash) this.remember(settings, path, hash);
       this.reconciledMtimes.set(path, local.mtime);
     }
   }
 
-  private async uploadPath(path: string, precomputedBytes?: Uint8Array, precomputedHash?: Uint8Array): Promise<void> {
+  private async uploadPath(path: string, precomputedBytes?: Uint8Array, precomputedHash?: Uint8Array): Promise<Uint8Array | null> {
     const bytes = precomputedBytes ?? new Uint8Array(await this.deps.app.vault.adapter.readBinary(path));
 
     if (Platform.isMobile && bytes.byteLength > MOBILE_MAX_SYNC_FILE_SIZE_BYTES) {
@@ -203,7 +240,7 @@ export class ConfigSyncEngine {
         this.warnedOversizedPaths.add(path);
         new Notice(t("p.sync.tooBigConfig", { path }));
       }
-      return;
+      return null;
     }
 
     const hash = precomputedHash ?? (await this.deps.crypto.hashContent(bytes));
@@ -219,15 +256,16 @@ export class ConfigSyncEngine {
       contentIv: encryptedContent.iv,
       contentCiphertext: encryptedContent.ciphertext,
     });
+    return hash;
   }
 
-  private async downloadPath(path: string, item: DecodedFileListItem): Promise<void> {
+  private async downloadPath(path: string, item: DecodedFileListItem): Promise<boolean> {
     if (Platform.isMobile && item.contentSize > MOBILE_MAX_SYNC_FILE_SIZE_BYTES) {
       if (!this.warnedOversizedPaths.has(path)) {
         this.warnedOversizedPaths.add(path);
         new Notice(t("p.sync.tooBigConfig", { path }));
       }
-      return;
+      return false;
     }
 
     const blob = await this.deps.remote.downloadBlob(this.deps.vaultId, item.id, item.contentSize);
@@ -236,6 +274,7 @@ export class ConfigSyncEngine {
     await this.ensureParentDir(path);
     await this.deps.app.vault.adapter.writeBinary(path, toArrayBuffer(plaintext));
     this.reconciledMtimes.set(path, await this.statMtime(path)); // the write itself changed the mtime
+    return true;
   }
 
   // ============================================================

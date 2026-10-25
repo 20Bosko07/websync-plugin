@@ -2,6 +2,7 @@ import { t } from "../i18n/index.js";
 import { MarkdownView, Notice, type App, type EventRef } from "obsidian";
 import {
   COLLAB_MAX_TEXT_LENGTH,
+  merge3,
   type CollabClientMessage,
   type CollabPeer,
   type CollabPeersMessage,
@@ -33,6 +34,8 @@ export interface CollabManagerDeps {
   getFileId: (path: string) => Promise<string | null>;
   /** True if `text` equals what this device last uploaded/downloaded for `path`, i.e. there are no unsynced local edits in it. */
   isTextSynced: (path: string, text: string) => Promise<boolean>;
+  /** The text this device last had in common with the server for `path` (the merge base), or null if unknown. */
+  mergeBase: (path: string) => Promise<string | null>;
   isEnabled: () => boolean;
   /** Called whenever who-is-in-which-note may have changed, so the UI (header avatars) can re-read `presenceFor`. */
   onPresenceChange: () => void;
@@ -419,13 +422,22 @@ export class CollabManager {
       // host's is right. But if this device has edits that never made it to the server (e.g. it
       // was offline), keep a copy of them instead of silently overwriting.
       const wasSynced = await this.deps.isTextSynced(room.path, before);
+      const base = wasSynced ? null : await this.deps.mergeBase(room.path);
       if (this.rooms.get(room.fileId) !== room || room.session !== session) return;
       const latestCm = getEditorView(room.view);
       if (!latestCm) return;
       const now = latestCm.state.doc.toString();
-      if (now !== hostText && (!wasSynced || now !== before)) await this.saveConflictCopy(room, now);
+      const hasOwnEdits = now !== hostText && (!wasSynced || now !== before);
+      // Edits made here while the host did something else usually merge cleanly; only a real overlap needs a copy.
+      const merged = hasOwnEdits && base !== null ? merge3(base, now, hostText) : null;
+      if (hasOwnEdits && merged === null) await this.saveConflictCopy(room, now);
       replaceEditorText(latestCm, hostText);
       this.finishJoin(room, session, latestCm);
+      if (merged !== null && merged !== hostText) {
+        // After binding, so the merged result goes out to the other devices as an ordinary edit.
+        const boundCm = getEditorView(room.view);
+        if (boundCm && room.session === session) replaceEditorText(boundCm, merged);
+      }
       return;
     }
     this.finishJoin(room, session, cm);
