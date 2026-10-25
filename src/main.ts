@@ -19,6 +19,8 @@ import { WebSyncStatusBar } from "./ui/StatusBar.js";
 import { WebSyncHeaderActions } from "./ui/HeaderActions.js";
 import { ExplorerProgressRings, createTransferTracker } from "./ui/TransferProgress.js";
 import { HISTORY_VIEW_TYPE, HistoryView } from "./ui/HistoryView.js";
+import { PublishService } from "./publish/PublishService.js";
+import { PublishModal } from "./ui/PublishModal.js";
 import { HISTORY_DIFF_VIEW_TYPE, HistoryDiffView } from "./ui/HistoryDiffView.js";
 
 export default class WebSyncPlugin extends Plugin {
@@ -100,8 +102,22 @@ export default class WebSyncPlugin extends Plugin {
             .setSection("view")
             .onClick(() => void this.openHistory(file)),
         );
+        if (file.extension.toLowerCase() === "md") {
+          menu.addItem((item) =>
+            item
+              .setTitle(t("p.pub.menu"))
+              .setIcon("link")
+              .setSection("view")
+              .onClick(() => void this.openPublish(file)),
+          );
+        }
       }),
     );
+    this.addCommand({
+      id: "websync-share-link",
+      name: t("p.pub.cmd"),
+      callback: () => void this.openPublish(this.app.workspace.getActiveFile()),
+    });
     this.addCommand({
       id: "websync-file-history",
       name: t("p.cmd.fileHistory"),
@@ -382,6 +398,45 @@ export default class WebSyncPlugin extends Plugin {
   private async ensureHistoryLeaf(): Promise<void> {
     if (this.app.workspace.getLeavesOfType(HISTORY_VIEW_TYPE).length > 0) return;
     await this.app.workspace.getRightLeaf(false)?.setViewState({ type: HISTORY_VIEW_TYPE, active: false });
+  }
+
+  /**
+   * "Share as link" for a note, like in the web editor: the dialog creates the public link (an encrypted snapshot, the key
+   * stays in the link), copies it, and sets expiry / password. Only the owner of the vault can publish.
+   */
+  async openPublish(file: TFile | null): Promise<void> {
+    if (!file) return;
+    const linked = this.settings.linkedVault;
+    if (!linked || !this.syncEngine || !this.localIndex || !this.cryptoService.isUnlocked()) {
+      new Notice(t("p.pub.needVault"));
+      return;
+    }
+    if (linked.memberKey) {
+      new Notice(t("p.pub.onlyOwner"));
+      return;
+    }
+    if (file.extension.toLowerCase() !== "md") {
+      new Notice(t("p.pub.onlyNotes"));
+      return;
+    }
+    const record = await this.localIndex.getByPath(file.path);
+    if (!record) {
+      new Notice(t("p.pub.notSynced"));
+      return;
+    }
+    if (!this.account?.webUrl) await this.refreshAccount(true);
+    if (!this.account?.webUrl) {
+      new Notice(t("p.pub.noWeb"));
+      return;
+    }
+    const service = new PublishService({
+      app: this.app,
+      remote: this.remoteApi,
+      crypto: this.cryptoService,
+      vaultId: linked.vaultId,
+      webBase: () => this.account?.webUrl ?? null,
+    });
+    new PublishModal(this.app, service, file, record.fileId).open();
   }
 
   /** Reveals the history view wherever the user docked it and shows `file` (or the vault's change log). */

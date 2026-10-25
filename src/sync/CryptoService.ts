@@ -4,6 +4,7 @@ import {
   decryptBytes,
   decryptText,
   deriveVaultKeys,
+  derivePublishKey,
   encryptBytes,
   encryptText,
   fromBase64,
@@ -191,6 +192,11 @@ export class CryptoService {
 
   async decryptContent(ciphertext: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
     return decryptBytes(this.requireKeys().aesKey, ciphertext, iv);
+  }
+
+  /** The key of a note's public link (stays in the link's #fragment; derived from the vault key, so any device rebuilds it). */
+  async publishKey(fileId: string): Promise<Uint8Array> {
+    return derivePublishKey(this.requireKeys().hmacKey, fileId);
   }
 
   async hashContent(plaintext: Uint8Array): Promise<Uint8Array> {

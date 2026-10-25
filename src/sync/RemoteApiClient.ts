@@ -16,7 +16,7 @@ import type {
   VaultDetail,
   VaultListItem,
 } from "@websync/shared";
-import { fromBase64, toBase64, UPLOAD_CHUNK_SIZE_BYTES } from "@websync/shared";
+import { fromBase64, toBase64, UPLOAD_CHUNK_SIZE_BYTES, type PublishedNote, type PublishOptions } from "@websync/shared";
 import { apiRequest, apiRequestBinary } from "./httpClient.js";
 
 export interface DecodedFileListItem {
@@ -114,6 +114,25 @@ export class RemoteApiClient {
   /** The account with its storage numbers, plan state and limits (drives the storage row and the sync icon warning). */
   async getMe(): Promise<MeResponse> {
     return apiRequest<MeResponse>(this.serverUrl, { path: "/auth/me", token: this.token });
+  }
+
+  /** The notes of the vault that have a public link (only the vault's owner can see and change them). */
+  async listPublications(vaultId: string): Promise<PublishedNote[]> {
+    return apiRequest<PublishedNote[]>(this.serverUrl, { path: `/vaults/${vaultId}/publish`, token: this.token });
+  }
+
+  /** Publishes (or refreshes) a note: `blob` is the base64 of the sealed snapshot. */
+  async publishNote(vaultId: string, fileId: string, blob: string, options: PublishOptions): Promise<PublishedNote> {
+    return apiRequest<PublishedNote>(this.serverUrl, { method: "PUT", path: `/vaults/${vaultId}/publish/${fileId}`, token: this.token, json: { blob, ...options } });
+  }
+
+  /** Changes expiry / password of an existing link without uploading the note again. */
+  async updatePublication(vaultId: string, fileId: string, options: PublishOptions): Promise<PublishedNote> {
+    return apiRequest<PublishedNote>(this.serverUrl, { method: "PATCH", path: `/vaults/${vaultId}/publish/${fileId}`, token: this.token, json: options });
+  }
+
+  async removePublication(vaultId: string, fileId: string): Promise<void> {
+    await apiRequest<unknown>(this.serverUrl, { method: "DELETE", path: `/vaults/${vaultId}/publish/${fileId}`, token: this.token });
   }
 
   async listVaults(): Promise<VaultListItem[]> {

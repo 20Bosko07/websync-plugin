@@ -548,3 +548,52 @@ details[open] > .websync-section-title::before {
   color: var(--text-faint);
   user-select: none;
 }
+
+/* ---- Share as link dialog ----------------------------------------------- */
+
+.websync-publish-link {
+  display: flex;
+  gap: 8px;
+  margin: 0.5em 0;
+}
+
+.websync-publish-link input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+}
+
+.websync-publish-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.75em;
+}
+
+.websync-publish-chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.websync-publish-chip.is-warn {
+  background: color-mix(in srgb, var(--text-error) 15%, transparent);
+  color: var(--text-error);
+}
+
+.websync-publish-actions {
+  border-top: none;
+}
+
+.websync-publish-actions .setting-item-control {
+  flex: 1;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.websync-publish-actions .websync-publish-stop {
+  margin-right: auto;
+}
