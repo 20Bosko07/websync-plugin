@@ -18,7 +18,7 @@ import type {
 } from "@websync/shared";
 import { fromBase64, toBase64, UPLOAD_CHUNK_SIZE_BYTES, type PublishedNote, type PublishOptions } from "@websync/shared";
 import type { BillingInfo } from "./billing.js";
-import { apiRequest, apiRequestBinary } from "./httpClient.js";
+import { apiRequest, apiRequestBinary, TransferCancelled } from "./httpClient.js";
 
 export interface DecodedFileListItem {
   id: string;
@@ -179,7 +179,8 @@ export class RemoteApiClient {
     };
   }
 
-  async uploadFile(vaultId: string, fileId: string, payload: UploadFilePayload, onProgress?: TransferProgress): Promise<UploadFileResult> {
+  /** `shouldStop`: asked between the chunks of a large file - true ends the upload (the file was deleted meanwhile). */
+  async uploadFile(vaultId: string, fileId: string, payload: UploadFilePayload, onProgress?: TransferProgress, shouldStop?: () => boolean): Promise<UploadFileResult> {
     const meta: UploadFileMeta = {
       pathCiphertext: toBase64(payload.pathCiphertext),
       pathNonce: toBase64(payload.pathNonce),
@@ -190,7 +191,7 @@ export class RemoteApiClient {
 
     const total = payload.contentIv.length + payload.contentCiphertext.length;
     // A proxy/tunnel in front of the server caps one request body (Cloudflare: 100 MB) - large files go in chunks.
-    if (total > UPLOAD_CHUNK_SIZE_BYTES) return this.uploadChunked(vaultId, fileId, meta, payload, onProgress);
+    if (total > UPLOAD_CHUNK_SIZE_BYTES) return this.uploadChunked(vaultId, fileId, meta, payload, onProgress, shouldStop);
 
     // Assumption (not a formally listed DTO in @websync/shared as of writing
     // this): the server's "updated file row" response to this PUT has the
@@ -234,6 +235,7 @@ export class RemoteApiClient {
     meta: UploadFileMeta,
     payload: UploadFilePayload,
     onProgress?: TransferProgress,
+    shouldStop?: () => boolean,
   ): Promise<UploadFileResult> {
     const total = payload.contentIv.length + payload.contentCiphertext.length;
     const start: StartChunkedUploadRequest = { fileId, size: total };
@@ -246,6 +248,7 @@ export class RemoteApiClient {
     try {
       onProgress?.(0, total);
       for (let index = 0; index < session.chunkCount; index++) {
+        if (shouldStop?.()) throw new TransferCancelled();
         const from = index * session.chunkSize;
         const to = Math.min(total, from + session.chunkSize);
         const chunk = sliceOfPair(payload.contentIv, payload.contentCiphertext, from, to);
@@ -287,7 +290,7 @@ export class RemoteApiClient {
    * Downloads a file's encrypted blob. With `expectedSize` (the plaintext size from the file list) a large blob is
    * fetched in ranges, which gives progress and keeps each response small.
    */
-  async downloadBlob(vaultId: string, fileId: string, expectedSize?: number, onProgress?: TransferProgress): Promise<Uint8Array> {
+  async downloadBlob(vaultId: string, fileId: string, expectedSize?: number, onProgress?: TransferProgress, shouldStop?: () => boolean): Promise<Uint8Array> {
     const path = `/vaults/${vaultId}/files/${fileId}/blob`;
     const total = expectedSize === undefined ? 0 : expectedSize + 28; // iv (12) + GCM tag (16)
     if (total <= UPLOAD_CHUNK_SIZE_BYTES) {
@@ -298,6 +301,7 @@ export class RemoteApiClient {
     const out = new Uint8Array(total);
     onProgress?.(0, total);
     for (let from = 0; from < total; from += UPLOAD_CHUNK_SIZE_BYTES) {
+      if (shouldStop?.()) throw new TransferCancelled();
       const to = Math.min(total, from + UPLOAD_CHUNK_SIZE_BYTES) - 1;
       const part = await apiRequestBinary(this.serverUrl, { path, token: this.token, headers: { Range: `bytes=${from}-${to}` } });
       if (part.length === total && from === 0) {

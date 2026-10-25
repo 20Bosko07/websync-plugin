@@ -14,7 +14,7 @@ import type { LocalIndex, LocalIndexRecord } from "./LocalIndex.js";
 import type { FileSystemAdapter } from "./FileSystemAdapter.js";
 import type { TransferTracker } from "../ui/TransferTracker.js";
 import { t } from "../i18n/index.js";
-import { WebSyncApiError } from "./httpClient.js";
+import { TransferCancelled, WebSyncApiError } from "./httpClient.js";
 
 /** Notes up to this size are kept as merge base and can be merged when edited on two devices. */
 const MERGE_MAX_BYTES = 1024 * 1024;
@@ -111,6 +111,43 @@ export class SyncEngine {
 
   /** Set by `dispose()`: a sync that is still running (the first one runs in the background) stops at its next file. */
   private disposed = false;
+  /** Files and folders the user deleted here, with the time: a transfer that was running meanwhile must not undo that. */
+  private readonly locallyDeleted = new Map<string, number>();
+
+  private markLocallyDeleted(path: string): void {
+    const now = Date.now();
+    this.locallyDeleted.set(path, now);
+    for (const [other, at] of this.locallyDeleted) if (now - at > 10 * 60_000) this.locallyDeleted.delete(other);
+  }
+
+  /** Was `path` (or a folder around it) deleted here since `since`? */
+  private deletedSince(path: string, since: number): boolean {
+    for (let current = path; ; ) {
+      const at = this.locallyDeleted.get(current);
+      if (at !== undefined && at >= since) return true;
+      const slash = current.lastIndexOf("/");
+      if (slash <= 0) return false;
+      current = current.slice(0, slash);
+    }
+  }
+
+  /**
+   * `path` was deleted here since `since` and is really gone (Obsidian also reports a delete for some renames that only change
+   * the case of a name - the file is still there then).
+   */
+  private goneSince(path: string, since: number): boolean {
+    return this.deletedSince(path, since) && !this.deps.fs.getFileByPath(path);
+  }
+
+  /** The bytes of a local file, or null when it is gone by now (deleted while the sync was busy with something else). */
+  private async readLocal(file: TFile): Promise<Uint8Array | null> {
+    try {
+      return await this.deps.fs.readBinary(file);
+    } catch (err) {
+      if (!this.deps.fs.getFileByPath(file.path)) return null;
+      throw err;
+    }
+  }
 
   dispose(): void {
     this.disposed = true;
@@ -181,14 +218,17 @@ export class SyncEngine {
     if (file instanceof TFolder) {
       if (type === "modify" || file.isRoot() || isHiddenFolder(file.path)) return;
       const path = file.path;
+      if (type === "delete") this.markLocallyDeleted(path);
       this.scheduleDebounced(`folder:${path}`, () => (type === "delete" ? this.processFolderDelete(path) : this.processFolderCreate(path)));
       return;
     }
     if (!(file instanceof TFile)) return;
     const path = file.path;
     // The change is noticed: an empty circle in the explorer right away (it fills once the file is sent, after the debounce).
-    if (type === "delete") this.deps.transfers?.release(path); // deleted before it was sent: nothing to wait for
-    else this.deps.transfers?.queue([path], Date.now(), true);
+    if (type === "delete") {
+      this.markLocallyDeleted(path);
+      this.deps.transfers?.release(path); // deleted before it was sent: nothing to wait for
+    } else this.deps.transfers?.queue([path], Date.now(), true);
     this.scheduleDebounced(path, () => this.processLocalChange(type, path), path);
   }
 
@@ -276,7 +316,8 @@ export class SyncEngine {
     const fileId = record?.fileId ?? crypto.randomUUID();
 
     await this.withFileLock(fileId, async () => {
-      const plaintext = await this.deps.fs.readBinary(file);
+      const plaintext = await this.readLocal(file);
+      if (!plaintext) return; // deleted meanwhile
       const hash = await this.deps.crypto.hashContent(plaintext);
       if (record && record.lastContentHashBlinded === toBase64(hash)) return; // no real content change (e.g. mtime-only touch)
       await this.uploadFile(file, fileId, { plaintext, hash });
@@ -671,7 +712,8 @@ export class SyncEngine {
    * and the other one is then saved as a conflict copy next to the note instead of being thrown away.
    */
   private async reconcileExisting(item: DecodedFileListItem, path: string, localFile: TFile): Promise<void> {
-    const localBytes = await this.deps.fs.readBinary(localFile);
+    const localBytes = await this.readLocal(localFile);
+    if (!localBytes) return; // deleted while the sync was busy: the delete event takes care of it
     const localHash = await this.deps.crypto.hashContent(localBytes);
     const localHashBase64 = toBase64(localHash);
     const remoteHashBase64 = toBase64(item.contentHashBlinded);
@@ -803,7 +845,9 @@ export class SyncEngine {
    * is weighed against the delete by timestamp.
    */
   private async remoteDeleteWins(record: LocalIndexRecord, localFile: TFile, remoteUpdatedAt: string): Promise<boolean> {
-    const localHash = toBase64(await this.deps.crypto.hashContent(await this.deps.fs.readBinary(localFile)));
+    const localBytes = await this.readLocal(localFile);
+    if (!localBytes) return true; // gone here as well: nothing to weigh
+    const localHash = toBase64(await this.deps.crypto.hashContent(localBytes));
     if (localHash === record.lastContentHashBlinded) return true;
     return this.isRemoteNewer(remoteUpdatedAt, this.deps.fs.getMtime(localFile));
   }
@@ -831,13 +875,17 @@ export class SyncEngine {
     // is picked up by the full sync that runs when the account can write again.
     if (this.deps.isReadOnly?.()) return;
 
+    if (!this.deps.fs.getFileByPath(file.path)) return; // deleted before its turn came
+
     const transferPath = file.path;
+    const startedAt = Date.now();
     this.deps.transfers?.begin(transferPath);
     let result: { version: number };
     let hash: Uint8Array;
     let uploadedPlaintext: Uint8Array;
     try {
-      const plaintext = precomputed?.plaintext ?? (await this.deps.fs.readBinary(file));
+      const plaintext = precomputed?.plaintext ?? (await this.readLocal(file));
+      if (!plaintext) return; // deleted while it was being read
       uploadedPlaintext = plaintext;
       hash = precomputed?.hash ?? (await this.deps.crypto.hashContent(plaintext));
       const encryptedContent = await this.deps.crypto.encryptContent(plaintext);
@@ -856,8 +904,12 @@ export class SyncEngine {
           editSessionId: this.touchEditSession(fileId),
         },
         (loaded, total) => this.deps.transfers?.progress(transferPath, loaded, total),
+        // A large file goes up in chunks: deleting it meanwhile ends the upload instead of sending the rest.
+        () => this.goneSince(transferPath, startedAt),
       );
     } catch (err) {
+      // Deleted on purpose while it was on its way (or gone before it could be read): nothing to report.
+      if (err instanceof TransferCancelled || !this.deps.fs.getFileByPath(file.path)) return;
       // A refused upload must not abort the whole sync run (the other files still have to go through).
       if (this.handleRefusedUpload(err, file)) return;
       throw err;
@@ -865,15 +917,22 @@ export class SyncEngine {
       this.deps.transfers?.end(transferPath);
     }
 
-    await this.deps.localIndex.put({
+    const record: LocalIndexRecord = {
       fileId,
       localPath: file.path,
       lastKnownVersion: result.version,
       lastContentHashBlinded: toBase64(hash),
       lastSyncedAt: new Date().toISOString(),
-    });
-    await this.rememberBase(fileId, file.path, uploadedPlaintext, toBase64(hash));
+    };
+    await this.deps.localIndex.put(record);
     this.noteOwnWrite(result.version);
+    // Deleted here while it was on its way up (a small file is sent in one piece): the copy that just arrived at the server
+    // goes again - the delete event found nothing to delete at the time and would otherwise never come back to it.
+    if (this.goneSince(transferPath, startedAt)) {
+      await this.deleteRemote(record);
+      return;
+    }
+    await this.rememberBase(fileId, file.path, uploadedPlaintext, toBase64(hash));
   }
 
   /**
@@ -926,16 +985,26 @@ export class SyncEngine {
       return;
     }
 
+    const startedAt = Date.now();
     this.deps.transfers?.begin(path);
     let downloaded: Uint8Array;
     try {
-      const blob = await this.deps.remote.downloadBlob(this.deps.vaultId, item.id, item.contentSize, (loaded, total) =>
-        this.deps.transfers?.progress(path, loaded, total),
+      const blob = await this.deps.remote.downloadBlob(
+        this.deps.vaultId,
+        item.id,
+        item.contentSize,
+        (loaded, total) => this.deps.transfers?.progress(path, loaded, total),
+        () => this.deletedSince(path, startedAt),
       );
+      // Deleted here (the file or its folder) while it came down: writing it now would undo that.
+      if (this.deletedSince(path, startedAt)) return;
       const { ciphertext, iv } = unpackBlob(blob);
       const plaintext = await this.deps.crypto.decryptContent(ciphertext, iv);
       await this.deps.fs.writeBinary(path, plaintext);
       downloaded = plaintext;
+    } catch (err) {
+      if (err instanceof TransferCancelled) return;
+      throw err;
     } finally {
       this.deps.transfers?.end(path);
     }

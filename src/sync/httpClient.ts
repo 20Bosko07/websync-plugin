@@ -19,6 +19,14 @@ import { t } from "../i18n/index.js";
 import { requestUrl } from "obsidian";
 import { currentLocale } from "../i18n";
 
+/** A transfer that was stopped on purpose (the file was deleted while it was on its way): not an error to report. */
+export class TransferCancelled extends Error {
+  constructor() {
+    super("transfer cancelled");
+    this.name = "TransferCancelled";
+  }
+}
+
 export class WebSyncApiError extends Error {
   constructor(
     message: string,
