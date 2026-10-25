@@ -431,7 +431,9 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     void this.plugin.authClient
       .getMe(sessionToken)
       .then(async (me) => {
-        this.plugin.settings.accountEmail = me.email;
+        // The hosted service signs in with an e-mail address, a self-hosted server with a user name.
+        const account = me as { email?: string; username?: string };
+        this.plugin.settings.accountEmail = account.email ?? account.username ?? null;
         await this.plugin.saveSettings();
         this.display();
       })
