@@ -90,6 +90,12 @@ export interface WebSyncSettings {
   lastSyncAt: string | null;
 
   /**
+   * Largest file (MB) this device syncs while it is a phone / tablet; 0 = no limit. Encrypting a file needs several times its
+   * size in memory at once, and big attachments have crashed the Android app - hence a limit, 25 MB by default.
+   */
+  mobileMaxFileMb: number;
+
+  /**
    * Live collaboration: show where other devices are in a note (coloured
    * cursors with their device name) and edit together in real time whenever
    * two or more devices have the same note open. Off = always plain file sync.
@@ -114,6 +120,8 @@ export const DEFAULT_SETTINGS: WebSyncSettings = {
 
   syncPaused: false,
   lastSyncAt: null,
+
+  mobileMaxFileMb: 25,
 
   collabEnabled: true,
 

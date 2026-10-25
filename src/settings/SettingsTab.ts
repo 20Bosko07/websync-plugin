@@ -796,6 +796,28 @@ export class WebSyncSettingsTab extends PluginSettingTab {
         }),
       );
 
+    // Only a phone / tablet has the limit; the choice is stored per device.
+    if (Platform.isMobile) {
+      new Setting(containerEl)
+        .setName(t("p.mobileLimit"))
+        .setDesc(t("p.mobileLimitDesc"))
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("25", "25 MB")
+            .addOption("50", "50 MB")
+            .addOption("100", "100 MB")
+            .addOption("250", "250 MB")
+            .addOption("0", t("p.mobileLimit.none"))
+            .setValue(String(this.plugin.settings.mobileMaxFileMb))
+            .onChange(async (value) => {
+              this.plugin.settings.mobileMaxFileMb = Number(value);
+              await this.plugin.saveSettings();
+              // Files that were skipped before are picked up now.
+              if (this.plugin.syncEngine) void this.plugin.runManualSync();
+            }),
+        );
+    }
+
     new Setting(containerEl).setName(t("p.syncNow")).addButton((btn) =>
       btn
         .setButtonText(t("p.syncNow"))

@@ -52,6 +52,8 @@ export interface SyncEngineDeps {
   /** The vault-wide `currentVersion` this device last fully applied - the `since=` cursor for incremental polling. */
   initialGlobalVersion: number;
   onStateChange: (state: { lastSyncAt: string; globalVersion: number }) => void | Promise<void>;
+  /** Largest file this device syncs while it is a phone / tablet (default: the safe limit of the shared code). */
+  mobileMaxFileBytes?: () => number;
   /** True while the account is read-only (trial / subscription over): uploads are skipped instead of being refused one by one. */
   isReadOnly?: () => boolean;
   /** The server refused a write because the account is read-only (402) or the storage quota is used up (413). */
@@ -111,6 +113,10 @@ export class SyncEngine {
 
   /** Set by `dispose()`: a sync that is still running (the first one runs in the background) stops at its next file. */
   private disposed = false;
+  private mobileLimit(): number {
+    return this.deps.mobileMaxFileBytes?.() ?? MOBILE_MAX_SYNC_FILE_SIZE_BYTES;
+  }
+
   /** Files and folders the user deleted here, with the time: a transfer that was running meanwhile must not undo that. */
   private readonly locallyDeleted = new Map<string, number>();
 
@@ -861,7 +867,7 @@ export class SyncEngine {
     fileId: string,
     precomputed?: { plaintext: Uint8Array; hash: Uint8Array },
   ): Promise<void> {
-    if (Platform.isMobile && file.stat.size > MOBILE_MAX_SYNC_FILE_SIZE_BYTES) {
+    if (Platform.isMobile && file.stat.size > this.mobileLimit()) {
       if (!this.warnedOversizedIds.has(fileId)) {
         this.warnedOversizedIds.add(fileId);
         new Notice(
@@ -975,7 +981,7 @@ export class SyncEngine {
       return;
     }
 
-    if (Platform.isMobile && item.contentSize > MOBILE_MAX_SYNC_FILE_SIZE_BYTES) {
+    if (Platform.isMobile && item.contentSize > this.mobileLimit()) {
       if (!this.warnedOversizedIds.has(item.id)) {
         this.warnedOversizedIds.add(item.id);
         new Notice(

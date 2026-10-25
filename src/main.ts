@@ -295,6 +295,7 @@ export default class WebSyncPlugin extends Plugin {
       fs: this.fsAdapter,
       localIndex,
       isPaused: () => this.settings.syncPaused,
+      mobileMaxFileBytes: () => (this.settings.mobileMaxFileMb > 0 ? this.settings.mobileMaxFileMb * 1024 * 1024 : Number.POSITIVE_INFINITY),
       isConfigPath: (path) => path.startsWith(configDirPrefix),
       isCollabLive: (fileId) => this.collabManager?.isLive(fileId) ?? false,
       transfers: this.transfers,
