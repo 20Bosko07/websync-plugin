@@ -1,9 +1,9 @@
 /**
  * The API server of the hosted WebSync service - what the plugin talks to unless the user switches on "self-hosting" in
  * the settings (Advanced). It is the address of the API server (the one the web app itself calls), not of the web app.
- * Set it once the service's domain is final; while it is empty a hosted account cannot be signed in from this build.
+ * DEV build: points at the development server. Change it to the production address before a release for everybody.
  */
-export const HOSTED_SERVER_URL = "";
+export const HOSTED_SERVER_URL = "https://api-websync-dev.boskoo.ch";
 
 /** Trimmed, without trailing slashes - how addresses are compared and stored. */
 export function normalizeServerUrl(url: string): string {
