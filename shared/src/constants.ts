@@ -66,8 +66,11 @@ export const FOLDER_MARKER_FILENAME = ".websync-folder";
  */
 export const UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
-/** Transfers that take longer than this get a progress ring in the file explorer (shorter ones would only flicker). */
-export const TRANSFER_PROGRESS_DELAY_MS = 2000;
+/**
+ * How long after a change was noticed (or a transfer began) the file explorer shows its circle: empty and grey while the change
+ * waits for its turn, filling while it moves. Short enough to feel immediate, long enough that nothing flashes for a blink.
+ */
+export const TRANSFER_PROGRESS_DELAY_MS = 250;
 
 /**
  * Version of the wire protocol / crypto format the plugin and the server must agree on. Bump it on every change that

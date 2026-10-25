@@ -15,6 +15,8 @@ interface Transfer {
   total: number;
   /** When it was first seen (queued or started). */
   since: number;
+  /** A single edit waiting for its debounce: shows its circle, but does not make the status icon say "syncing" yet. */
+  passive?: boolean;
 }
 
 export interface FileRing {
@@ -30,7 +32,7 @@ export interface FolderRing {
   fraction: number;
 }
 
-/** A single quick transfer (a note saved) must not flash a ring: it shows after this long, or as part of a batch. */
+/** A batch of this many files shows all its circles at once; a smaller one only after the delay. */
 const BATCH_MIN_FILES = 3;
 /** How long the finished (full) rings stay on screen after the last file. */
 const LINGER_MS = 900;
@@ -42,18 +44,25 @@ export class TransferTracker {
   constructor(private readonly delayMs = 2000) {}
 
   /** Files a sync is about to move: grey circles until their turn comes. Already running or finished ones are kept. */
-  queue(paths: Iterable<string>, now = Date.now()): void {
+  queue(paths: Iterable<string>, now = Date.now(), passive = false): void {
     this.cancelClear();
     for (const path of paths) {
       const existing = this.transfers.get(path);
       if (existing && existing.state !== "done") continue;
-      this.transfers.set(path, { state: "queued", loaded: 0, total: 0, since: now });
+      this.transfers.set(path, { state: "queued", loaded: 0, total: 0, since: now, passive });
     }
   }
 
   /** Files that turned out not to need a transfer (same content on both sides, refused): no ring for them. */
   dropQueued(): void {
     for (const [path, transfer] of this.transfers) if (transfer.state === "queued") this.transfers.delete(path);
+    this.finishIfIdle();
+  }
+
+  /** One waiting file that did not turn into a transfer after all (nothing changed): no circle for it. */
+  release(path: string): void {
+    if (this.transfers.get(path)?.state !== "queued") return;
+    this.transfers.delete(path);
     this.finishIfIdle();
   }
 
@@ -81,9 +90,9 @@ export class TransferTracker {
     this.finishIfIdle();
   }
 
-  /** Something is queued or running. */
+  /** Something is queued or running (a lone edit that only waits for its debounce does not count). */
   get active(): boolean {
-    for (const transfer of this.transfers.values()) if (transfer.state !== "done") return true;
+    for (const transfer of this.transfers.values()) if (transfer.state !== "done" && !(transfer.passive && transfer.state === "queued")) return true;
     return false;
   }
 

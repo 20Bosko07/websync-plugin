@@ -114,6 +114,7 @@ export class SyncEngine {
 
   dispose(): void {
     this.disposed = true;
+    this.deps.transfers?.dropQueued();
     for (const timer of this.debounceTimers.values()) window.clearTimeout(timer);
     this.debounceTimers.clear();
   }
@@ -184,7 +185,11 @@ export class SyncEngine {
       return;
     }
     if (!(file instanceof TFile)) return;
-    this.scheduleDebounced(file.path, () => this.processLocalChange(type, file.path));
+    const path = file.path;
+    // The change is noticed: an empty circle in the explorer right away (it fills once the file is sent, after the debounce).
+    if (type === "delete") this.deps.transfers?.release(path); // deleted before it was sent: nothing to wait for
+    else this.deps.transfers?.queue([path], Date.now(), true);
+    this.scheduleDebounced(path, () => this.processLocalChange(type, path), path);
   }
 
   handleLocalRename(file: TAbstractFile, oldPath: string): void {
@@ -196,6 +201,7 @@ export class SyncEngine {
       return;
     }
     if (!(file instanceof TFile)) return;
+    this.deps.transfers?.release(oldPath); // renamed before it was sent: the waiting circle belongs to the old name
     this.clearDebounce(oldPath);
     this.scheduleDebounced(file.path, () => this.processLocalRename(oldPath, file.path));
   }
@@ -204,14 +210,19 @@ export class SyncEngine {
   // Debounce (per local path)
   // ============================================================
 
-  private scheduleDebounced(key: string, action: () => Promise<void>): void {
+  /** `queuedPath`: the file whose waiting circle is dropped when this run is over without having sent it. */
+  private scheduleDebounced(key: string, action: () => Promise<void>, queuedPath?: string): void {
     this.clearDebounce(key);
     const timer = window.setTimeout(() => {
       this.debounceTimers.delete(key);
-      action().catch((err) => {
-        if ((err as { status?: unknown } | null)?.status === 402) this.deps.onWriteRefused?.("read-only");
-        console.error(`WebSync: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
-      });
+      action()
+        .catch((err) => {
+          if ((err as { status?: unknown } | null)?.status === 402) this.deps.onWriteRefused?.("read-only");
+          console.error(`WebSync: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
+        })
+        .finally(() => {
+          if (queuedPath) this.deps.transfers?.release(queuedPath);
+        });
     }, LOCAL_CHANGE_DEBOUNCE_MS);
     this.debounceTimers.set(key, timer);
   }
