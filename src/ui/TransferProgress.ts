@@ -1,12 +1,12 @@
 import type { App } from "obsidian";
-import { TRANSFER_PROGRESS_DELAY_MS } from "@websync/shared";
+import { TRANSFER_PROGRESS_DELAY_MS, TRANSFER_QUEUED_DELAY_MS } from "@websync/shared";
 import { TransferTracker } from "./TransferTracker.js";
 
 export { TransferTracker };
 
 /** The tracker with the delay the whole product uses for "a transfer worth showing". */
 export function createTransferTracker(): TransferTracker {
-  return new TransferTracker(TRANSFER_PROGRESS_DELAY_MS);
+  return new TransferTracker(TRANSFER_PROGRESS_DELAY_MS, TRANSFER_QUEUED_DELAY_MS);
 }
 
 const RING_CLASS = "websync-progress-ring";

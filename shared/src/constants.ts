@@ -67,10 +67,15 @@ export const FOLDER_MARKER_FILENAME = ".websync-folder";
 export const UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
 /**
- * How long after a change was noticed (or a transfer began) the file explorer shows its circle: empty and grey while the change
- * waits for its turn, filling while it moves. Short enough to feel immediate, long enough that nothing flashes for a blink.
+ * How long after a transfer began the file explorer shows its circle, filling while it moves. Short enough to feel
+ * immediate, long enough that a tiny file does not flash one.
  */
 export const TRANSFER_PROGRESS_DELAY_MS = 250;
+/**
+ * A change that only waits (not sent yet) shows its empty circle after this long. A normal edit is sent within the debounce
+ * window and must not flash a circle every time; this is for what really waits: no connection, a long queue.
+ */
+export const TRANSFER_QUEUED_DELAY_MS = 3000;
 
 /**
  * Version of the wire protocol / crypto format the plugin and the server must agree on. Bump it on every change that

@@ -17,6 +17,8 @@ interface Transfer {
   since: number;
   /** A single edit waiting for its debounce: shows its circle, but does not make the status icon say "syncing" yet. */
   passive?: boolean;
+  /** Once a circle was shown for it, it stays until the batch is over (no blinking when others finish around it). */
+  shown?: boolean;
 }
 
 export interface FileRing {
@@ -32,7 +34,7 @@ export interface FolderRing {
   fraction: number;
 }
 
-/** A batch of this many files shows all its circles at once; a smaller one only after the delay. */
+/** A batch of this many files shows all its circles at once; a smaller one only after the delays below. */
 const BATCH_MIN_FILES = 3;
 /** How long the finished (full) rings stay on screen after the last file. */
 const LINGER_MS = 900;
@@ -41,7 +43,14 @@ export class TransferTracker {
   private readonly transfers = new Map<string, Transfer>();
   private clearTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly delayMs = 2000) {}
+  /**
+   * `delayMs`: how long a running transfer takes before it gets a circle (a tiny file is done before that - no flash).
+   * `queuedDelayMs`: the same for a change that only waits (an ordinary edit is sent within the debounce window).
+   */
+  constructor(
+    private readonly delayMs = 250,
+    private readonly queuedDelayMs = 3000,
+  ) {}
 
   /** Files a sync is about to move: grey circles until their turn comes. Already running or finished ones are kept. */
   queue(paths: Iterable<string>, now = Date.now(), passive = false): void {
@@ -69,7 +78,8 @@ export class TransferTracker {
   begin(path: string, total = 0, now = Date.now()): void {
     this.cancelClear();
     const existing = this.transfers.get(path);
-    this.transfers.set(path, { state: "active", loaded: 0, total, since: existing && existing.state !== "done" ? existing.since : now });
+    // The circle counts from the real start. One that was shown while the change waited simply goes on.
+    this.transfers.set(path, { state: "active", loaded: 0, total, since: now, shown: existing?.shown });
   }
 
   progress(path: string, loaded: number, total: number): void {
@@ -102,11 +112,22 @@ export class TransferTracker {
     return transfer.total > 0 ? Math.min(1, transfer.loaded / transfer.total) : 0;
   }
 
-  /** The entries worth a ring right now: all of a batch of several files, or a lone transfer that takes a while. */
+  /**
+   * The entries worth a ring right now: all of a batch of several files, a running transfer that takes a moment, a change
+   * that waits for long. Once an entry has a ring it keeps it (also when the batch shrinks around it).
+   */
   private shown(now: number): Array<[string, Transfer]> {
     const entries = [...this.transfers.entries()];
     const batch = entries.length >= BATCH_MIN_FILES;
-    return entries.filter(([, transfer]) => batch || now - transfer.since >= this.delayMs);
+    return entries.filter(([, transfer]) => {
+      if (transfer.shown) return true;
+      const wait = transfer.state === "queued" ? this.queuedDelayMs : this.delayMs;
+      if (batch || (transfer.state !== "done" && now - transfer.since >= wait)) {
+        transfer.shown = true;
+        return true;
+      }
+      return false;
+    });
   }
 
   files(now = Date.now()): FileRing[] {
