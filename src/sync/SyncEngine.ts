@@ -12,7 +12,7 @@ import type { CryptoService } from "./CryptoService.js";
 import type { DecodedFileListItem, RemoteApiClient } from "./RemoteApiClient.js";
 import type { LocalIndex, LocalIndexRecord } from "./LocalIndex.js";
 import type { FileSystemAdapter } from "./FileSystemAdapter.js";
-import type { TransferTracker } from "../ui/TransferProgress.js";
+import type { TransferTracker } from "../ui/TransferTracker.js";
 import { t } from "../i18n/index.js";
 import { WebSyncApiError } from "./httpClient.js";
 
@@ -109,7 +109,11 @@ export class SyncEngine {
     this.currentGlobalVersion = deps.initialGlobalVersion;
   }
 
+  /** Set by `dispose()`: a sync that is still running (the first one runs in the background) stops at its next file. */
+  private disposed = false;
+
   dispose(): void {
+    this.disposed = true;
     for (const timer of this.debounceTimers.values()) window.clearTimeout(timer);
     this.debounceTimers.clear();
   }
@@ -154,6 +158,8 @@ export class SyncEngine {
       throw err;
     } finally {
       this.syncing = false;
+      // Whatever was announced to the rings but needed no transfer after all (same content on both sides) goes away.
+      this.deps.transfers?.dropQueued();
     }
   }
 
@@ -165,6 +171,7 @@ export class SyncEngine {
       await this.persistState();
     } finally {
       this.syncing = false;
+      this.deps.transfers?.dropQueued();
     }
   }
 
@@ -376,6 +383,8 @@ export class SyncEngine {
 
     const handledPaths = new Set<string>();
 
+    await this.announceFullSyncWork(localByPath, indexRecords, remoteResp.files);
+
     // Files the index knows but that are gone locally were deleted while the plugin could not see it (app closed, or on
     // mobile suspended before the debounced delete ran). Those deletes are pushed below - unless so much is missing that
     // it looks like a broken or moved vault rather than a user action; then the files are restored instead.
@@ -389,6 +398,7 @@ export class SyncEngine {
 
     // --- Phase A ---
     for (const record of indexRecords) {
+      if (this.disposed) return;
       await this.withFileLock(record.fileId, () =>
         this.reconcileIndexedRecord(record, remoteById, localByPath, handledPaths, allowLocalDeletes),
       );
@@ -396,6 +406,7 @@ export class SyncEngine {
 
     // --- Phase B ---
     for (const item of remoteResp.files) {
+      if (this.disposed) return;
       if (item.isDeleted || knownFileIds.has(item.id)) continue;
 
       let path: string;
@@ -420,6 +431,7 @@ export class SyncEngine {
 
     // --- Phase C ---
     for (const [path, file] of localByPath) {
+      if (this.disposed) return;
       if (handledPaths.has(path)) continue;
       const fileId = crypto.randomUUID();
       await this.withFileLock(fileId, () => this.uploadFile(file, fileId));
@@ -434,6 +446,43 @@ export class SyncEngine {
       await this.withFileLock(fileId, () => this.uploadMarker(fileId, markerPath));
       handledPaths.add(markerPath);
     }
+  }
+
+  /**
+   * Tells the explorer rings which files this run will probably move, before the first one starts: they show as empty grey
+   * circles and fill one after the other. It is a cheap estimate (no hashing): a file the server has newer than the index
+   * remembers, a local file touched after its last sync, a remote file that is missing here, a local file the server does
+   * not know. What turns out not to need a transfer is dropped again at the end of the run.
+   */
+  private async announceFullSyncWork(localByPath: Map<string, TFile>, indexRecords: LocalIndexRecord[], remoteFiles: DecodedFileListItem[]): Promise<void> {
+    const tracker = this.deps.transfers;
+    if (!tracker) return;
+    const recordById = new Map(indexRecords.map((r) => [r.fileId, r] as const));
+    const indexedPaths = new Set(indexRecords.map((r) => r.localPath));
+    const remotePaths = new Set<string>();
+    const paths: string[] = [];
+    const relevant = (path: string) => !isMarkerPath(path) && !this.deps.isConfigPath(path);
+
+    for (const item of remoteFiles) {
+      if (item.isDeleted) continue;
+      let path: string;
+      try {
+        path = await this.deps.crypto.decryptPath(item.pathCiphertext, item.pathNonce);
+      } catch {
+        continue; // reported when the file itself is handled
+      }
+      remotePaths.add(path);
+      if (!relevant(path)) continue;
+      const record = recordById.get(item.id);
+      const local = localByPath.get(path);
+      if (!record || !local) paths.push(path); // new here, or gone here: comes down
+      else if (item.version > record.lastKnownVersion) paths.push(path); // changed on another device
+      else if (local.stat.mtime > Date.parse(record.lastSyncedAt) + 2000) paths.push(path); // changed here since
+    }
+    for (const path of localByPath.keys()) {
+      if (relevant(path) && !remotePaths.has(path) && !indexedPaths.has(path)) paths.push(path); // new here: goes up
+    }
+    if (paths.length > 0) tracker.queue(paths);
   }
 
   private async reconcileIndexedRecord(
@@ -524,11 +573,29 @@ export class SyncEngine {
     // Oldest first, and the cursor follows item by item: if one of them throws, everything after it is still ahead of
     // the cursor and gets fetched again by the next poll instead of being skipped for good.
     const changes = [...remoteResp.files].sort((a, b) => a.version - b.version);
+    await this.announceRemoteChanges(changes);
     for (const item of changes) {
       await this.withFileLock(item.id, () => this.applyRemoteChange(item));
       this.bumpGlobalVersion(item.version);
     }
     this.bumpGlobalVersion(remoteResp.currentVersion);
+  }
+
+  /** Several files changed elsewhere: they show as waiting circles until they are downloaded. */
+  private async announceRemoteChanges(changes: DecodedFileListItem[]): Promise<void> {
+    const tracker = this.deps.transfers;
+    if (!tracker || changes.length < 3) return;
+    const paths: string[] = [];
+    for (const item of changes) {
+      if (item.isDeleted) continue;
+      try {
+        const path = await this.deps.crypto.decryptPath(item.pathCiphertext, item.pathNonce);
+        if (!isMarkerPath(path) && !this.deps.isConfigPath(path)) paths.push(path);
+      } catch {
+        // reported when the file itself is handled
+      }
+    }
+    tracker.queue(paths);
   }
 
   private async applyRemoteChange(item: DecodedFileListItem): Promise<void> {

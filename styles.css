@@ -148,7 +148,67 @@
 
 /* ---- Settings tab: collapsible sections ---------------------------------- */
 
-.websync-section,
+/* Top of the tab: name, one status line, signed-in address. */
+.websync-hero {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.websync-hero-title {
+  font-size: var(--h2-size);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.websync-hero-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.websync-hero-sub {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.websync-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.websync-dot.is-ok {
+  background: var(--color-green, #3fb950);
+}
+
+.websync-dot.is-warn {
+  background: var(--color-orange, #d98a00);
+}
+
+/* Every group is a card. */
+.websync-section {
+  margin-top: 10px;
+  padding: 0 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+}
+
+.websync-section > .websync-section-title {
+  padding: 13px 0;
+}
+
+.websync-section > .websync-section-body {
+  padding-bottom: 8px;
+}
+
 .websync-dropdown {
   border-top: 1px solid var(--background-modifier-border);
   margin-top: 0.5em;

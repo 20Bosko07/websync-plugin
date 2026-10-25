@@ -69,6 +69,9 @@ export interface ConfigSyncSettings {
 }
 
 export interface WebSyncSettings {
+  /** Self-hosting: use `serverUrl` instead of the hosted service (see hosted.ts). */
+  selfHosted: boolean;
+  /** Address of the API server of the user's own installation; only used while `selfHosted` is on. */
   serverUrl: string;
   sessionToken: string | null;
   sessionExpiresAt: string | null;
@@ -97,6 +100,7 @@ export interface WebSyncSettings {
 }
 
 export const DEFAULT_SETTINGS: WebSyncSettings = {
+  selfHosted: false,
   serverUrl: "",
   sessionToken: null,
   sessionExpiresAt: null,

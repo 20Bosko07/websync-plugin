@@ -2,6 +2,7 @@ import { Notice, Plugin, TFile } from "obsidian";
 import { applyHistoryTexts, t } from "./i18n";
 import { REMOTE_POLL_INTERVAL_MS, toBase64, type MeResponse } from "@websync/shared";
 import { DEFAULT_SETTINGS, type WebSyncSettings } from "./types.js";
+import { HOSTED_SERVER_URL, normalizeServerUrl } from "./hosted.js";
 import { AuthClient } from "./sync/AuthClient.js";
 import { RemoteApiClient } from "./sync/RemoteApiClient.js";
 import { CryptoService } from "./sync/CryptoService.js";
@@ -16,7 +17,7 @@ import { collabCompartment } from "./collab/editorBinding.js";
 import { WebSyncSettingsTab } from "./settings/SettingsTab.js";
 import { WebSyncStatusBar } from "./ui/StatusBar.js";
 import { WebSyncHeaderActions } from "./ui/HeaderActions.js";
-import { ExplorerProgressRings, TransferTracker } from "./ui/TransferProgress.js";
+import { ExplorerProgressRings, createTransferTracker } from "./ui/TransferProgress.js";
 import { HISTORY_VIEW_TYPE, HistoryView } from "./ui/HistoryView.js";
 import { HISTORY_DIFF_VIEW_TYPE, HistoryDiffView } from "./ui/HistoryDiffView.js";
 
@@ -43,8 +44,9 @@ export default class WebSyncPlugin extends Plugin {
   /** Which "can't sync any more" notice was already shown in the current blocked period (shown once, not on every refused file). */
   private blockedNoticeShown: "read-only" | "storage-full" | null = null;
   /** Uploads/downloads in flight (explorer progress rings, "syncing" status). */
-  readonly transfers = new TransferTracker();
+  readonly transfers = createTransferTracker();
 
+  private settingsTab: WebSyncSettingsTab | null = null;
   private statusBar!: WebSyncStatusBar;
   private headerActions!: WebSyncHeaderActions;
   private progressRings!: ExplorerProgressRings;
@@ -53,16 +55,20 @@ export default class WebSyncPlugin extends Plugin {
     applyHistoryTexts(); // the change log (shared with the web app) speaks Obsidian's language
     await this.loadSettings();
 
-    this.authClient = new AuthClient(() => this.settings.serverUrl);
+    this.authClient = new AuthClient(() => this.serverUrl);
     this.remoteApi = new RemoteApiClient(
-      () => this.settings.serverUrl,
+      () => this.serverUrl,
       () => this.settings.sessionToken,
     );
     this.cryptoService = new CryptoService();
     this.vaultLinkManager = new VaultLinkManager(this.remoteApi, this.cryptoService);
     this.fsAdapter = new FileSystemAdapter(this.app);
 
-    this.addSettingTab(new WebSyncSettingsTab(this.app, this));
+    this.settingsTab = new WebSyncSettingsTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
+    // The web page opens obsidian://websync-pair once the sign-in is confirmed there: that brings Obsidian to the front
+    // and the plugin asks the server at once instead of waiting for the next poll tick.
+    this.registerObsidianProtocolHandler("websync-pair", () => this.settingsTab?.pollPairingNow());
 
     // Every markdown editor gets an (empty) slot the CollabManager fills with
     // the Yjs binding while a note is co-edited. Must be registered up front.
@@ -133,7 +139,7 @@ export default class WebSyncPlugin extends Plugin {
    * `force` skips the small throttle (used right after the server refused a write). Never throws.
    */
   async refreshAccount(force = false): Promise<void> {
-    if (!this.settings.sessionToken || !this.settings.serverUrl) {
+    if (!this.settings.sessionToken || !this.serverUrl) {
       if (this.account) {
         this.account = null;
         this.statusBar?.refresh();
@@ -188,7 +194,19 @@ export default class WebSyncPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const stored = ((await this.loadData()) ?? {}) as Partial<WebSyncSettings>;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+    // Installs from before the hosted service had its own address: an address that is not the hosted one is a
+    // self-hosted server and stays in use.
+    if (stored.selfHosted === undefined) {
+      const own = normalizeServerUrl(stored.serverUrl ?? "");
+      this.settings.selfHosted = own !== "" && own !== normalizeServerUrl(HOSTED_SERVER_URL);
+    }
+  }
+
+  /** The API server in use: the user's own one while self-hosting is on, else the hosted service. */
+  get serverUrl(): string {
+    return normalizeServerUrl(this.settings.selfHosted ? this.settings.serverUrl : HOSTED_SERVER_URL);
   }
 
   async saveSettings(): Promise<void> {
@@ -281,18 +299,29 @@ export default class WebSyncPlugin extends Plugin {
       }),
     );
 
-    try {
-      await syncEngine.runFullSync();
-    } catch (err) {
-      console.error("WebSync: initialer Full-Sync fehlgeschlagen", err);
-      new Notice(t("p.syncFailed", { error: (err as Error).message }));
-    }
-    try {
-      await this.configSyncEngine.run();
-    } catch (err) {
-      console.error("WebSync: initialer Einstellungs-Sync fehlgeschlagen", err);
-    }
+    // The first sync of a big vault takes minutes. It runs in the background: unlocking / signing in is finished at once
+    // (the status icon and the explorer rings show the progress) instead of the settings tab waiting for every file.
+    const configSyncEngine = this.configSyncEngine;
+    void (async () => {
+      try {
+        await syncEngine.runFullSync();
+      } catch (err) {
+        // Stopped meanwhile (unlinked, signed out, locked): the failure is a consequence of that, not news.
+        if (this.syncEngine === syncEngine) {
+          console.error("WebSync: initialer Full-Sync fehlgeschlagen", err);
+          new Notice(t("p.syncFailed", { error: (err as Error).message }));
+        }
+      }
+      if (this.syncEngine !== syncEngine) return;
+      try {
+        await configSyncEngine.run();
+      } catch (err) {
+        console.error("WebSync: initialer Einstellungs-Sync fehlgeschlagen", err);
+      }
+      this.statusBar?.refresh();
+    })();
 
+    // The engine ignores a poll while a sync is running, so these can start right away.
     this.registerInterval(window.setInterval(() => this.pollNow(), REMOTE_POLL_INTERVAL_MS));
     this.registerInterval(window.setInterval(() => void this.refreshAccount(), 2 * 60 * 1000));
     void this.refreshAccount(true);
@@ -329,7 +358,7 @@ export default class WebSyncPlugin extends Plugin {
       this.collabManager = collabManager;
 
       this.liveSyncClient = new LiveSyncClient(
-        this.settings.serverUrl,
+        this.serverUrl,
         this.settings.sessionToken,
         linkedVault.vaultId,
         () => this.pollNow(),

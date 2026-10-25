@@ -1,6 +1,6 @@
 /**
- * WebSync's presence in the note header (the icon row top right, next to the
- * reading-view "book" toggle), built with Obsidian's own `view.addAction`:
+ * WebSync's presence in the tab header (the icon row top right, next to the
+ * reading-view "book" toggle and the "..." menu), built with Obsidian's own `view.addAction`:
  *
  *  - While other devices are in the same note, a compact stack of coloured
  *    avatars (initial of the device name, same colour as their cursor). The
@@ -14,7 +14,7 @@
  * touched when the rendered result actually changes.
  */
 import { t } from "../i18n/index.js";
-import { FileView, MarkdownView, Menu, setIcon, setTooltip } from "obsidian";
+import { ItemView, MarkdownView, Menu, setIcon, setTooltip } from "obsidian";
 import type WebSyncPlugin from "../main.js";
 import type { CollabPresence } from "../collab/CollabManager.js";
 import { describeStatus, type WebSyncStatusBar } from "./StatusBar.js";
@@ -29,7 +29,7 @@ interface HeaderAction {
 }
 
 export class WebSyncHeaderActions {
-  private readonly actions = new Map<FileView, HeaderAction>();
+  private readonly actions = new Map<ItemView, HeaderAction>();
   private timer: ReturnType<typeof window.setInterval> | null = null;
 
   constructor(
@@ -57,11 +57,12 @@ export class WebSyncHeaderActions {
   }
 
   refresh(): void {
-    const seen = new Set<FileView>();
+    const seen = new Set<ItemView>();
     this.plugin.app.workspace.iterateRootLeaves((leaf) => {
       const view = leaf.view;
-      // Note/canvas/PDF/image tabs; not the empty "new tab" page or non-file views.
-      if (!(view instanceof FileView)) return;
+      // Every tab of the main area: notes, canvas, PDF, images, the graph view and the empty "new tab" page - the sync
+      // icon is the same everywhere, so it is never missing just because no file is open.
+      if (!(view instanceof ItemView)) return;
       seen.add(view);
       let action = this.actions.get(view);
       if (!action) {
@@ -79,12 +80,12 @@ export class WebSyncHeaderActions {
     }
   }
 
-  private presenceOf(view: FileView): CollabPresence[] | null {
+  private presenceOf(view: ItemView): CollabPresence[] | null {
     if (!(view instanceof MarkdownView) || !view.file) return null;
     return this.plugin.collabManager?.presenceFor(view.file.path) ?? null;
   }
 
-  private render(view: FileView, action: HeaderAction): void {
+  private render(view: ItemView, action: HeaderAction): void {
     const { el } = action;
     const presence = this.presenceOf(view);
     const status = this.statusBar.computeStatus();
@@ -117,7 +118,7 @@ export class WebSyncHeaderActions {
     setTooltip(el, tooltip, { placement: "bottom" });
   }
 
-  private onClick(evt: MouseEvent, view: FileView): void {
+  private onClick(evt: MouseEvent, view: ItemView): void {
     const presence = this.presenceOf(view);
     this.statusBar.openMenu(evt, (menu: Menu) => {
       if (!presence || presence.length === 0) return;

@@ -5,6 +5,7 @@ import type { LinkedVaultConfig } from "../types.js";
 import { VaultLinkError, type VaultLinkResult } from "../sync/VaultLinkManager.js";
 import { WebSyncApiError } from "../sync/httpClient.js";
 import { formatBytes } from "../ui/historyFormat.js";
+import { HOSTED_SERVER_URL, normalizeServerUrl } from "../hosted.js";
 
 type PairingState = "idle" | "starting" | "waiting" | "denied" | "expired" | "error";
 
@@ -54,6 +55,10 @@ export class WebSyncSettingsTab extends PluginSettingTab {
   private pollToken: string | null = null;
   private pairingError: string | null = null;
   private pollTimer: ReturnType<typeof window.setInterval> | null = null;
+  /** A poll request is on its way: a second one must not start (the answer "approved" is single-use). */
+  private pollInFlight = false;
+  /** Asks at once when the app comes back to the front (the browser was in front meanwhile). */
+  private resumeHandler: (() => void) | null = null;
 
   // --- Vault unlock state ---
   // Set once a device-pairing approval hands us a vaultId that isn't (yet)
@@ -72,12 +77,39 @@ export class WebSyncSettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "WebSync" });
+    containerEl.addClass("websync-settings");
+    this.renderHero(containerEl);
 
     this.renderAccountSection(containerEl);
     this.renderVaultLinkSection(containerEl);
     this.renderSyncStatusSection(containerEl);
     this.renderConfigSyncSection(containerEl);
+    this.renderAdvancedSection(containerEl);
+  }
+
+  /** The top of the tab: name and one line that says where things stand (not signed in / locked / connected). */
+  private renderHero(parent: HTMLElement): void {
+    const settings = this.plugin.settings;
+    let tone: "off" | "warn" | "ok" = "off";
+    let text = t("p.hero.signedOut");
+    if (settings.sessionToken) {
+      if (!settings.linkedVault) {
+        tone = "warn";
+        text = t("p.hero.noVault");
+      } else if (!this.plugin.cryptoService.isUnlocked()) {
+        tone = "warn";
+        text = t("p.hero.locked", { vault: settings.linkedVault.vaultName });
+      } else {
+        tone = "ok";
+        text = t("p.hero.connected", { vault: settings.linkedVault.vaultName });
+      }
+    }
+    const hero = parent.createDiv({ cls: "websync-hero" });
+    hero.createDiv({ cls: "websync-hero-title", text: "WebSync" });
+    const line = hero.createDiv({ cls: "websync-hero-status" });
+    line.createSpan({ cls: `websync-dot is-${tone}` });
+    line.createSpan({ text });
+    if (settings.accountEmail && settings.sessionToken) hero.createDiv({ cls: "websync-hero-sub", text: settings.accountEmail });
   }
 
   /**
@@ -115,18 +147,10 @@ export class WebSyncSettingsTab extends PluginSettingTab {
   private renderAccountSection(parent: HTMLElement): void {
     const containerEl = this.section(parent, "account", "Account");
 
-    new Setting(containerEl)
-      .setName(t("p.serverUrl"))
-      .setDesc(t("p.serverUrlHint"))
-      .addText((text) =>
-        text
-          .setPlaceholder("https://websync.example.com")
-          .setValue(this.plugin.settings.serverUrl)
-          .onChange(async (value) => {
-            this.plugin.settings.serverUrl = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+    // The hosted service is the default and needs no address. This build may not know it yet (see hosted.ts).
+    if (!this.plugin.settings.selfHosted && !normalizeServerUrl(HOSTED_SERVER_URL) && !this.plugin.settings.sessionToken) {
+      containerEl.createEl("p", { text: t("p.hostedMissing"), cls: "websync-warning-text" });
+    }
 
     if (this.plugin.settings.sessionToken) {
       new Setting(containerEl)
@@ -316,12 +340,25 @@ export class WebSyncSettingsTab extends PluginSettingTab {
 
   private startPolling(): void {
     this.clearPollTimer();
-    this.pollTimer = window.setInterval(() => void this.pollOnce(), 2000);
+    this.pollTimer = window.setInterval(() => void this.pollOnce(), 1500);
+    // While the browser is in front, a phone suspends Obsidian - the timer only ticks again some time after the return.
+    // So ask the moment the app is visible / focused again (and when the confirmation page opens obsidian://websync-pair).
+    this.resumeHandler = () => {
+      if (document.visibilityState === "visible") void this.pollOnce();
+    };
+    document.addEventListener("visibilitychange", this.resumeHandler);
+    window.addEventListener("focus", this.resumeHandler);
+  }
+
+  /** From the obsidian://websync-pair link: ask the server now. */
+  pollPairingNow(): void {
+    if (this.pollToken) void this.pollOnce();
   }
 
   private async pollOnce(): Promise<void> {
     const pollToken = this.pollToken;
-    if (!pollToken) return;
+    if (!pollToken || this.pollInFlight) return;
+    this.pollInFlight = true;
     try {
       const result = await this.plugin.authClient.pollDeviceAuth(pollToken);
       if (result.status === "pending") return; // keep polling
@@ -347,6 +384,8 @@ export class WebSyncSettingsTab extends PluginSettingTab {
       this.clearPollTimer();
       this.pairingState = "expired";
       this.display();
+    } finally {
+      this.pollInFlight = false;
     }
   }
 
@@ -363,6 +402,11 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+    if (this.resumeHandler) {
+      document.removeEventListener("visibilitychange", this.resumeHandler);
+      window.removeEventListener("focus", this.resumeHandler);
+      this.resumeHandler = null;
     }
   }
 
@@ -383,13 +427,15 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     this.plugin.settings.deviceName = this.deviceName || this.defaultDeviceName();
     await this.plugin.saveSettings();
 
-    try {
-      const me = await this.plugin.authClient.getMe(sessionToken);
-      this.plugin.settings.accountEmail = me.email;
-      await this.plugin.saveSettings();
-    } catch (err) {
-      console.error("WebSync: Kontoinformationen konnten nicht geladen werden", err);
-    }
+    // The e-mail address is only decoration: it is fetched while the rest goes on instead of holding the sign-in back.
+    void this.plugin.authClient
+      .getMe(sessionToken)
+      .then(async (me) => {
+        this.plugin.settings.accountEmail = me.email;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+      .catch((err) => console.error("WebSync: Kontoinformationen konnten nicht geladen werden", err));
 
     this.pairingState = "idle";
     this.pairingCode = null;
@@ -771,5 +817,55 @@ export class WebSyncSettingsTab extends PluginSettingTab {
           }),
         );
     }
+  }
+  // ============================================================
+  // 5. Erweitert (self-hosting)
+  // ============================================================
+
+  /**
+   * Out of the way on purpose: almost everybody uses the hosted service, which needs no address. Whoever runs their own
+   * server switches it on here and enters the address of its API server.
+   */
+  private renderAdvancedSection(parent: HTMLElement): void {
+    const settings = this.plugin.settings;
+    const containerEl = this.section(parent, "advanced", t("p.advanced"), {
+      summary: settings.selfHosted ? t("p.server.own") : undefined,
+    });
+    // The session belongs to one server: the choice can only change while signed out.
+    const locked = settings.sessionToken !== null;
+
+    new Setting(containerEl)
+      .setName(t("p.selfHost"))
+      .setDesc(locked ? t("p.selfHostLocked") : t("p.selfHostDesc"))
+      .addToggle((toggle) =>
+        toggle
+          .setValue(settings.selfHosted)
+          .setDisabled(locked)
+          .onChange(async (value) => {
+            settings.selfHosted = value;
+            if (value) this.openSections.add("advanced");
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (!settings.selfHosted) {
+      containerEl.createEl("p", { cls: "setting-item-description", text: t("p.server.hosted") });
+      return;
+    }
+
+    new Setting(containerEl)
+      .setName(t("p.apiUrl"))
+      .setDesc(t("p.apiUrlHint"))
+      .addText((text) =>
+        text
+          .setPlaceholder("https://api.example.com")
+          .setValue(settings.serverUrl)
+          .setDisabled(locked)
+          .onChange(async (value) => {
+            settings.serverUrl = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 }
