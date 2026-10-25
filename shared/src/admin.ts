@@ -3,6 +3,8 @@
  * Request bodies are zod schemas (validated by the server); responses are plain interfaces.
  */
 import { z } from "zod";
+import { MIN_PASSWORD_LENGTH } from "./constants";
+import { UsernameSchema } from "./dto";
 
 export const USER_ROLES = ["user", "admin"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
@@ -22,8 +24,8 @@ export const AdminReauthSchema = z.object({
 });
 
 export const AdminCreateUserSchema = AdminReauthSchema.extend({
-  email: z.string().email(),
-  password: z.string().min(10).max(1000),
+  username: UsernameSchema,
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
   role: z.enum(USER_ROLES).default("user"),
   quotaBytes: z.number().int().positive().nullable().optional(),
 });
@@ -36,20 +38,19 @@ export const AdminUpdateUserSchema = z.object({
   quotaBytes: z.number().int().positive().nullable().optional(),
   /** Per-account limit for a single file; null = the default. */
   maxFileBytes: z.number().int().positive().nullable().optional(),
-  emailVerified: z.boolean().optional(),
   /** Required whenever `role` changes. */
   currentPassword: z.string().min(1).max(1000).optional(),
 });
 export type AdminUpdateUserRequest = z.infer<typeof AdminUpdateUserSchema>;
 
-/** Sets a new password for an account (the way to recover an account on a server without e-mail). */
+/** Sets a new password for an account (the way to recover an account whose password was forgotten). */
 export const AdminSetPasswordSchema = AdminReauthSchema.extend({
-  newPassword: z.string().min(10).max(1000),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(1000),
 });
 
 export const AdminDeleteUserSchema = AdminReauthSchema.extend({
-  /** Must equal the account's e-mail address - a guard against deleting the wrong row. */
-  confirmEmail: z.string().min(1),
+  /** Must equal the account's username - a guard against deleting the wrong row. */
+  confirmUsername: z.string().min(1),
 });
 
 export const AdminDeleteVaultSchema = AdminReauthSchema.extend({
@@ -64,8 +65,8 @@ export const AdminListQuerySchema = z.object({
 
 export const AdminUserListQuerySchema = AdminListQuerySchema.extend({
   role: z.enum(USER_ROLES).optional(),
-  status: z.enum(["active", "disabled", "unverified"]).optional(),
-  sort: z.enum(["email", "createdAt", "lastActive", "storage", "traffic"]).default("createdAt"),
+  status: z.enum(["active", "disabled"]).optional(),
+  sort: z.enum(["username", "createdAt", "lastActive", "storage", "traffic"]).default("createdAt"),
   dir: z.enum(["asc", "desc"]).default("desc"),
 });
 
@@ -79,9 +80,8 @@ export interface TrafficTotals {
 
 export interface AdminUserRow {
   id: string;
-  email: string;
+  username: string;
   role: UserRole;
-  emailVerified: boolean;
   disabled: boolean;
   totpEnabled: boolean;
   createdAt: string;
@@ -105,7 +105,7 @@ export interface AdminUserRow {
 export interface AdminSessionRow {
   id: string;
   userId: string;
-  userEmail: string;
+  username: string;
   deviceName: string;
   clientType: string;
   createdAt: string;
@@ -119,7 +119,7 @@ export interface AdminVaultRow {
   id: string;
   name: string;
   ownerId: string;
-  ownerEmail: string;
+  ownerUsername: string;
   fileCount: number;
   totalBytes: number;
   currentVersion: number;
@@ -133,7 +133,7 @@ export interface AdminAuditEntry {
   id: string;
   createdAt: string;
   actorId: string | null;
-  actorEmail: string;
+  actorName: string;
   action: string;
   targetType: string | null;
   targetId: string | null;
@@ -182,30 +182,13 @@ export interface ServerProcessStats {
   disk: { totalBytes: number; freeBytes: number } | null;
 }
 
-export interface AdminMailRow {
-  id: string;
-  createdAt: string;
-  to: string;
-  kind: string;
-  /** Not stored for mails that carry a one-time code in the subject. */
-  subject: string | null;
-  status: "sent" | "failed" | "skipped";
-  error: string | null;
-}
-
-export const AdminMailQuerySchema = AdminListQuerySchema.extend({
-  status: z.enum(["sent", "failed", "skipped"]).optional(),
-});
-
 export interface AdminOverview {
-  users: { total: number; admins: number; disabled: number; unverified: number; withTotp: number; active24h: number; new7d: number };
+  users: { total: number; admins: number; disabled: number; withTotp: number; active24h: number; new7d: number };
   vaults: { total: number; deleted: number };
   files: { total: number; totalBytes: number };
   sessions: { active: number };
   live: { connections: number; usersOnline: number; rooms: number; peersInRooms: number };
   settings: AdminSettings;
-  /** Mails of the last 24 hours that did not go out. */
-  mail: { failed24h: number; skipped24h: number; sent24h: number; smtpConfigured: boolean };
   server: ServerProcessStats;
   traffic: { last5min: TrafficTotals & { errors: number }; last60min: TrafficTotals & { errors: number } };
 }
@@ -262,7 +245,7 @@ export interface AdminLiveDevice {
 
 export interface AdminActivityRow {
   userId: string;
-  email: string;
+  username: string;
   role: UserRole;
   online: boolean;
   devicesOnline: number;

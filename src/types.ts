@@ -75,7 +75,7 @@ export interface WebSyncSettings {
   serverUrl: string;
   sessionToken: string | null;
   sessionExpiresAt: string | null;
-  accountEmail: string | null;
+  accountUsername: string | null;
   /** This device's name as registered on the server (shown in the web panel and next to live cursors). */
   deviceName: string | null;
 
@@ -104,7 +104,7 @@ export const DEFAULT_SETTINGS: WebSyncSettings = {
   serverUrl: "",
   sessionToken: null,
   sessionExpiresAt: null,
-  accountEmail: null,
+  accountUsername: null,
   deviceName: null,
 
   linkedVault: null,

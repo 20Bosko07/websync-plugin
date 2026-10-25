@@ -164,7 +164,7 @@ export class HistoryView extends ItemView {
             hash: r.contentHashBlinded,
             hasContent: r.hasContent,
             deviceName: r.deviceName,
-            userEmail: r.userEmail,
+            username: r.username,
             createdAt: r.createdAt,
           };
         }),
@@ -247,7 +247,7 @@ export class HistoryView extends ItemView {
     setIcon(refresh, "refresh-cw");
     refresh.onclick = () => void this.reload();
 
-    const accounts = new Set(this.entries.map((e) => e.userEmail).filter(Boolean)).size > 1;
+    const accounts = new Set(this.entries.map((e) => e.username).filter(Boolean)).size > 1;
     const list = el.createDiv({ cls: "websync-history-list" });
     this.entries.forEach((entry, index) => {
       const row = list.createDiv({ cls: `websync-history-item${entry.id === this.selectedId ? " is-selected" : ""}` });
@@ -297,7 +297,7 @@ export class HistoryView extends ItemView {
   private renderVaultList(host: HTMLElement): void {
     host.empty();
     const q = this.query.trim().toLowerCase();
-    const accounts = new Set(this.entries.map((e) => e.userEmail).filter(Boolean)).size > 1;
+    const accounts = new Set(this.entries.map((e) => e.username).filter(Boolean)).size > 1;
     let day = "";
     let shown = 0;
     for (const entry of this.entries) {

@@ -94,7 +94,7 @@ export class HistoryDiffView extends ItemView {
             hash: r.contentHashBlinded,
             hasContent: r.hasContent,
             deviceName: r.deviceName,
-            userEmail: r.userEmail,
+            username: r.username,
             createdAt: r.createdAt,
           };
         }),

@@ -5,6 +5,8 @@ import { DEFAULT_SETTINGS, type WebSyncSettings } from "./types.js";
 import { HOSTED_SERVER_URL, normalizeServerUrl } from "./hosted.js";
 import { AuthClient } from "./sync/AuthClient.js";
 import { RemoteApiClient } from "./sync/RemoteApiClient.js";
+import type { BillingInfo } from "./sync/billing.js";
+import { WebSyncApiError } from "./sync/httpClient.js";
 import { CryptoService } from "./sync/CryptoService.js";
 import { VaultLinkManager } from "./sync/VaultLinkManager.js";
 import { FileSystemAdapter } from "./sync/FileSystemAdapter.js";
@@ -43,6 +45,11 @@ export default class WebSyncPlugin extends Plugin {
   /** The signed-in account with storage numbers and plan state; null until the first answer (or without a session). */
   account: MeResponse | null = null;
   private lastAccountLoad = 0;
+  /** The plan of the account on a hosted server; null on a self-hosted one (or while unknown). See loadBilling(). */
+  billing: BillingInfo | null = null;
+  /** Server + session `billing` was last asked for, so a changed server or a new login asks again. */
+  private billingKey = "";
+  private lastBillingLoad = 0;
   /** Which "can't sync any more" notice was already shown in the current blocked period (shown once, not on every refused file). */
   private blockedNoticeShown: "read-only" | "storage-full" | null = null;
   /** Uploads/downloads in flight (explorer progress rings, "syncing" status). */
@@ -180,6 +187,31 @@ export default class WebSyncPlugin extends Plugin {
     } catch {
       // Offline or the server is busy: keep what we knew.
     }
+  }
+
+  /**
+   * Asks the server for the plan of the account. Only the hosted service answers; a self-hosted server has no such
+   * endpoint (404), which just means "no plan section". Never throws; offline keeps what we knew. Returns true when the
+   * answer changed, so the settings can redraw.
+   */
+  async loadBilling(force = false): Promise<boolean> {
+    const key = `${this.serverUrl}|${this.settings.sessionToken ? "in" : "out"}`;
+    if (key !== this.billingKey) {
+      this.billingKey = key;
+      this.billing = null;
+      this.lastBillingLoad = 0;
+    }
+    if (!this.settings.sessionToken || !this.serverUrl) return false;
+    if (!force && this.lastBillingLoad && Date.now() - this.lastBillingLoad < 15_000) return false;
+    this.lastBillingLoad = Date.now();
+    const before = JSON.stringify(this.billing);
+    try {
+      this.billing = await this.remoteApi.getBilling();
+    } catch (err) {
+      // 4xx = this server has no plans (self-hosted); anything else (offline, busy) keeps the last answer.
+      if (err instanceof WebSyncApiError && err.status >= 400 && err.status < 500) this.billing = null;
+    }
+    return JSON.stringify(this.billing) !== before;
   }
 
   /** Why changes can't be synced right now (null = they can). */

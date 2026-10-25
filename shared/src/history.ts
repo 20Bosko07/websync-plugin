@@ -17,7 +17,7 @@ export interface RevisionEntry {
   hash: string;
   hasContent: boolean;
   deviceName: string | null;
-  userEmail: string | null;
+  username: string | null;
   createdAt: string;
 }
 
@@ -107,7 +107,7 @@ export function timeLabel(iso: string): string {
 /** Who made a change: the device, plus the account when the vault is shared (several people in the log). */
 export function whoLabel(entry: RevisionEntry, showAccount: boolean): string {
   const device = entry.deviceName ?? texts.unknownDevice;
-  return showAccount && entry.userEmail ? `${device} · ${entry.userEmail}` : device;
+  return showAccount && entry.username ? `${device} · ${entry.username}` : device;
 }
 
 // ---------------------------------------------------------------------------

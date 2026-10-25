@@ -1,3 +1,4 @@
+import { showsPlanSection } from "../sync/billing.js";
 import { t } from "../i18n/index.js";
 import { App, Notice, Platform, PluginSettingTab, Setting, type TextComponent } from "obsidian";
 import type WebSyncPlugin from "../main.js";
@@ -82,6 +83,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
 
     this.renderAccountSection(containerEl);
     this.renderVaultLinkSection(containerEl);
+    this.renderPlanSection(containerEl);
     this.renderSyncStatusSection(containerEl);
     this.renderConfigSyncSection(containerEl);
     this.renderAdvancedSection(containerEl);
@@ -109,7 +111,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     const line = hero.createDiv({ cls: "websync-hero-status" });
     line.createSpan({ cls: `websync-dot is-${tone}` });
     line.createSpan({ text });
-    if (settings.accountEmail && settings.sessionToken) hero.createDiv({ cls: "websync-hero-sub", text: settings.accountEmail });
+    if (settings.accountUsername && settings.sessionToken) hero.createDiv({ cls: "websync-hero-sub", text: settings.accountUsername });
   }
 
   /**
@@ -155,7 +157,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     if (this.plugin.settings.sessionToken) {
       new Setting(containerEl)
         .setName(t("p.signedIn"))
-        .setDesc(this.plugin.settings.accountEmail ?? "")
+        .setDesc(this.plugin.settings.accountUsername ?? "")
         .addButton((btn) =>
           btn.setButtonText(t("p.signOut")).onClick(() => {
             void this.logout();
@@ -427,13 +429,13 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     this.plugin.settings.deviceName = this.deviceName || this.defaultDeviceName();
     await this.plugin.saveSettings();
 
-    // The e-mail address is only decoration: it is fetched while the rest goes on instead of holding the sign-in back.
+    // The account name is only decoration: it is fetched while the rest goes on instead of holding the sign-in back.
     void this.plugin.authClient
       .getMe(sessionToken)
       .then(async (me) => {
-        // The hosted service signs in with an e-mail address, a self-hosted server with a user name.
-        const account = me as { email?: string; username?: string };
-        this.plugin.settings.accountEmail = account.email ?? account.username ?? null;
+        // A self-hosted server signs in with a user name, the hosted service with an e-mail address.
+        const account = me as { username?: string; email?: string };
+        this.plugin.settings.accountUsername = account.username ?? account.email ?? null;
         await this.plugin.saveSettings();
         this.display();
       })
@@ -469,7 +471,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     }
     this.plugin.settings.sessionToken = null;
     this.plugin.settings.sessionExpiresAt = null;
-    this.plugin.settings.accountEmail = null;
+    this.plugin.settings.accountUsername = null;
     this.pendingUnlockVaultId = null;
     this.pairingState = "idle";
     await this.plugin.saveSettings();
@@ -518,6 +520,74 @@ export class WebSyncSettingsTab extends PluginSettingTab {
       const planUrl = `${account.webUrl.replace(/\/+$/, "")}/account/billing`;
       setting.addButton((btn) => btn.setButtonText(t("p.openPlanBtn")).onClick(() => window.open(planUrl, "_blank")));
     }
+  }
+
+  // ============================================================
+  // 2b. Plan (hosted service only)
+  // ============================================================
+
+  /**
+   * Plan, subscription state, storage and limits - the same facts as the web app's "Plan" tab. Only shown when the
+   * server is the hosted WebSync service (a self-hosted server has no plans and answers nothing here).
+   */
+  private renderPlanSection(parent: HTMLElement): void {
+    if (!this.plugin.settings.sessionToken) return;
+    // Ask (the plugin throttles it); the first answer decides whether this section exists at all, so redraw then.
+    void this.plugin.loadBilling().then((changed) => {
+      if (changed) this.display();
+    });
+    const info = this.plugin.billing;
+    if (!showsPlanSection(info)) return;
+
+    const planBytes = info.plans.find((plan) => plan.id === (info.plan ?? info.compedPlan))?.quotaBytes ?? null;
+    const stateLabel = t(`p.plan.state.${info.state}`) + (planBytes ? ` · ${formatBytes(planBytes)}` : "");
+    const containerEl = this.section(parent, "plan", t("p.plan.title"), { summary: stateLabel });
+    const date = (iso: string) => new Date(iso).toLocaleDateString();
+    const webUrl = (this.plugin.account?.webUrl ?? this.plugin.serverUrl).replace(/\/+$/, "");
+    const openPlanPage = () => window.open(`${webUrl}/account/billing`, "_blank");
+
+    // Storage with its bar.
+    const used = info.usedBytes;
+    const quota = info.quotaBytes;
+    const percent = quota ? Math.min(100, Math.floor((used / quota) * 100)) : 0;
+    const storage = new Setting(containerEl)
+      .setName(t("p.storage"))
+      .setDesc(quota ? t("p.storageOf", { used: formatBytes(used), quota: formatBytes(quota), percent }) : t("p.storageNoLimit", { used: formatBytes(used) }));
+    if (quota) {
+      const bar = storage.descEl.createDiv({ cls: "websync-storage-bar" });
+      const fill = bar.createDiv({ cls: "websync-storage-fill" });
+      fill.style.width = `${percent}%`;
+      if (used >= quota) fill.addClass("is-full");
+      else if (used >= quota * 0.8) fill.addClass("is-nearly");
+    }
+
+    // State of the subscription, with what happens next.
+    let detail: string | null = null;
+    if (info.state === "trial" && info.trialEndsAt) detail = t("p.plan.trialEnds", { date: date(info.trialEndsAt) });
+    else if ((info.state === "active" || info.state === "past_due") && info.currentPeriodEnd) {
+      detail = info.cancelAtPeriodEnd ? t("p.plan.cancelsOn", { date: date(info.currentPeriodEnd) }) : t("p.plan.renews", { date: date(info.currentPeriodEnd) });
+    } else if ((info.state === "read_only" || info.state === "expired") && info.dataDeleteAt) detail = t("p.plan.deleteOn", { date: date(info.dataDeleteAt) });
+    else if (info.compedPlan) detail = t("p.plan.comped");
+    const state = new Setting(containerEl).setName(stateLabel);
+    if (detail) state.setDesc(detail);
+    if (info.state === "read_only" || info.state === "expired" || info.state === "past_due") state.descEl.addClass("websync-storage-warning");
+    if (info.hasCustomer) state.addButton((btn) => btn.setButtonText(t("p.plan.manage")).onClick(openPlanPage));
+
+    // Limits of the plan.
+    new Setting(containerEl).setName(t("p.plan.maxFile")).setDesc(formatBytes(info.maxFileBytes));
+    new Setting(containerEl).setName(t("p.plan.history")).setDesc(t("p.plan.historyDays", { days: info.historyDays }));
+
+    // Choose / change the plan (storage) on the web page.
+    if (!info.visible) {
+      containerEl.createEl("p", { cls: "setting-item-description", text: t("p.plan.unavailable") });
+      return;
+    }
+    if (!info.enabled) containerEl.createEl("p", { cls: "setting-item-description", text: t("p.plan.soon") });
+    if (info.soldOut && !info.hasSubscription) containerEl.createEl("p", { cls: "setting-item-description", text: t("p.plan.soldOut") });
+    new Setting(containerEl)
+      .setName(t("p.plan.plans"))
+      .setDesc(t("p.plan.choose"))
+      .addButton((btn) => btn.setButtonText(t("p.plan.manageStorage")).setCta().onClick(openPlanPage));
   }
 
   private renderVaultLinkSection(parent: HTMLElement): void {

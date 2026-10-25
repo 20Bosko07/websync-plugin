@@ -7,6 +7,12 @@ server** you run yourself (see the `websync` server repository; switch it on und
 - Version history, trash and restore, live collaboration, sharing and publishing.
 - Desktop and mobile.
 
+## Signing in
+
+The plugin has no login fields. Enter the address of your WebSync server in the plugin settings (your own, a company
+server, or a hosted one - it is just a URL), press "Sign in", and approve the device in the browser: you sign in on the
+server's web page with your username and password (plus authenticator / passkey if you set one up) and pick the vault.
+
 ## Disclosures (Obsidian developer policies)
 
 - **Network use:** the plugin talks only to a WebSync server: the hosted service by default, or the address of your own

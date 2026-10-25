@@ -17,6 +17,7 @@ import type {
   VaultListItem,
 } from "@websync/shared";
 import { fromBase64, toBase64, UPLOAD_CHUNK_SIZE_BYTES, type PublishedNote, type PublishOptions } from "@websync/shared";
+import type { BillingInfo } from "./billing.js";
 import { apiRequest, apiRequestBinary } from "./httpClient.js";
 
 export interface DecodedFileListItem {
@@ -114,6 +115,11 @@ export class RemoteApiClient {
   /** The account with its storage numbers, plan state and limits (drives the storage row and the sync icon warning). */
   async getMe(): Promise<MeResponse> {
     return apiRequest<MeResponse>(this.serverUrl, { path: "/auth/me", token: this.token });
+  }
+
+  /** Plan and subscription of the account - hosted service only (a self-hosted server answers 404). */
+  async getBilling(): Promise<BillingInfo> {
+    return apiRequest<BillingInfo>(this.serverUrl, { path: "/billing", token: this.token });
   }
 
   /** The notes of the vault that have a public link (only the vault's owner can see and change them). */
