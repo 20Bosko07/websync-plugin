@@ -17,8 +17,10 @@ interface Transfer {
   since: number;
   /** A single edit waiting for its debounce: shows its circle, but does not make the status icon say "syncing" yet. */
   passive?: boolean;
-  /** Once a circle was shown for it, it stays until the batch is over (no blinking when others finish around it). */
+  /** Once a circle was shown for it, it keeps showing (no blinking when others finish around it) until it is done. */
   shown?: boolean;
+  /** When it finished. */
+  doneAt?: number;
 }
 
 export interface FileRing {
@@ -38,6 +40,8 @@ export interface FolderRing {
 const BATCH_MIN_FILES = 3;
 /** How long the finished (full) rings stay on screen after the last file. */
 const LINGER_MS = 900;
+/** A finished file keeps its full circle this long, then it goes - the others of the batch are still running. */
+const DONE_SHOWN_MS = 600;
 
 export class TransferTracker {
   private readonly transfers = new Map<string, Transfer>();
@@ -90,10 +94,11 @@ export class TransferTracker {
     }
   }
 
-  end(path: string): void {
+  end(path: string, now = Date.now()): void {
     const transfer = this.transfers.get(path);
     if (transfer) {
       transfer.state = "done";
+      transfer.doneAt = now;
       transfer.loaded = Math.max(transfer.total, 1);
       transfer.total = Math.max(transfer.total, 1);
     }
@@ -130,25 +135,38 @@ export class TransferTracker {
     });
   }
 
-  files(now = Date.now()): FileRing[] {
-    return this.shown(now).map(([path, transfer]) => ({ path, fraction: this.fractionOf(transfer), state: transfer.state }));
+  /** A finished file loses its circle a moment after it is done; the rest of the batch goes on. */
+  private stillShown(transfer: Transfer, now: number): boolean {
+    return transfer.state !== "done" || now - (transfer.doneAt ?? now) < DONE_SHOWN_MS;
   }
 
-  /** A ring per folder with something of the batch anywhere below it (down to the last level): the average over those files. */
+  files(now = Date.now()): FileRing[] {
+    return this.shown(now)
+      .filter(([, transfer]) => this.stillShown(transfer, now))
+      .map(([path, transfer]) => ({ path, fraction: this.fractionOf(transfer), state: transfer.state }));
+  }
+
+  /**
+   * A ring per folder that still has something of the batch below it (down to the last level). It fills with what is done of
+   * everything the batch holds for that folder - finished files count, though their own circle is gone - and goes when the last
+   * file in it is done.
+   */
   folders(now = Date.now()): FolderRing[] {
-    const sums = new Map<string, { sum: number; count: number }>();
+    const sums = new Map<string, { sum: number; count: number; live: boolean }>();
     for (const [path, transfer] of this.shown(now)) {
       const value = this.fractionOf(transfer);
+      const live = this.stillShown(transfer, now);
       const parts = path.split("/");
       for (let depth = 1; depth < parts.length; depth++) {
         const folder = parts.slice(0, depth).join("/");
-        const entry = sums.get(folder) ?? { sum: 0, count: 0 };
+        const entry = sums.get(folder) ?? { sum: 0, count: 0, live: false };
         entry.sum += value;
         entry.count += 1;
+        entry.live ||= live;
         sums.set(folder, entry);
       }
     }
-    return [...sums.entries()].map(([path, { sum, count }]) => ({ path, fraction: sum / count }));
+    return [...sums.entries()].filter(([, { live }]) => live).map(([path, { sum, count }]) => ({ path, fraction: sum / count }));
   }
 
   private finishIfIdle(): void {

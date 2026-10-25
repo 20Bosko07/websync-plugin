@@ -1,7 +1,7 @@
 {
   "id": "websync",
   "name": "WebSync",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "minAppVersion": "1.4.0",
   "description": "End-to-end encrypted vault sync with your own WebSync server.",
   "author": "WebSync",
