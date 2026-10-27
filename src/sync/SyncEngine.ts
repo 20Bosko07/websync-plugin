@@ -299,6 +299,7 @@ export class SyncEngine {
       this.failed.set(key, { until: count >= MAX_FILE_ATTEMPTS ? Number.POSITIVE_INFINITY : Date.now() + FAILURE_BACKOFF_MS, count });
       if (count < MAX_FILE_ATTEMPTS) this.runFailures++;
       this.logError(err, path);
+      if (path) this.deps.transfers?.fail(path, t("p.fail.error", { error: errorArgs(err)[0] ?? "" }));
       return false;
     }
   }
@@ -318,6 +319,7 @@ export class SyncEngine {
     if (type === "delete") {
       this.markLocallyDeleted(path);
       this.deps.transfers?.release(path); // deleted before it was sent: nothing to wait for
+      this.deps.transfers?.clearFailure(path);
     } else this.deps.transfers?.queue([path], Date.now(), true);
     this.scheduleDebounced(path, () => this.processLocalChange(type, path), path);
   }
@@ -332,6 +334,7 @@ export class SyncEngine {
     }
     if (!(file instanceof TFile)) return;
     this.deps.transfers?.release(oldPath); // renamed before it was sent: the waiting circle belongs to the old name
+    this.deps.transfers?.clearFailure(oldPath);
     this.clearDebounce(oldPath);
     this.scheduleDebounced(file.path, () => this.processLocalRename(oldPath, file.path));
   }
@@ -350,6 +353,7 @@ export class SyncEngine {
           if ((err as { status?: unknown } | null)?.status === 402) this.deps.onWriteRefused?.("read-only");
           console.error(`WebSync: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
           this.logError(err, key.replace(/^folder:/, ""));
+          if (!key.startsWith("folder:")) this.deps.transfers?.fail(key, t("p.fail.error", { error: errorArgs(err)[0] ?? "" }));
         })
         .finally(() => {
           if (queuedPath) this.deps.transfers?.release(queuedPath);
@@ -698,6 +702,7 @@ export class SyncEngine {
     if (path !== record.localPath) {
       await this.deps.fs.renamePath(record.localPath, path); // no-op if the local file is already missing
       if (!isMarkerPath(path)) this.deps.log?.add({ kind: "rename-down", path, args: [record.localPath] });
+      this.deps.transfers?.clearFailure(record.localPath);
       handledPaths.add(path);
     }
 
@@ -745,7 +750,8 @@ export class SyncEngine {
     const changes = [...remoteResp.files].sort((a, b) => a.version - b.version);
     await this.announceRemoteChanges(changes);
     for (const item of changes) {
-      const done = await this.attempt(item.id, undefined, () => this.withFileLock(item.id, () => this.applyRemoteChange(item)));
+      const itemPath = item.isDeleted ? undefined : await this.deps.crypto.decryptPath(item.pathCiphertext, item.pathNonce).catch(() => undefined);
+      const done = await this.attempt(item.id, itemPath, () => this.withFileLock(item.id, () => this.applyRemoteChange(item)));
       if (done) this.bumpGlobalVersion(item.version);
     }
     // A change that could not be applied must be fetched again, and the others after it come with it: back to where this poll began.
@@ -803,6 +809,7 @@ export class SyncEngine {
     if (record && record.localPath !== path) {
       await this.deps.fs.renamePath(record.localPath, path);
       if (!isMarkerPath(path)) this.deps.log?.add({ kind: "rename-down", path, args: [record.localPath] });
+      this.deps.transfers?.clearFailure(record.localPath);
     }
 
     const localFile = this.deps.fs.getFileByPath(path);
@@ -986,6 +993,7 @@ export class SyncEngine {
     why?: LogReason,
   ): Promise<void> {
     if (Platform.isMobile && file.stat.size > this.mobileLimit()) {
+      this.deps.transfers?.fail(file.path, t("p.fail.tooBigMobile", { size: formatBytes(file.stat.size) }));
       if (!this.warnedOversizedIds.has(fileId)) {
         this.warnedOversizedIds.add(fileId);
         this.deps.log?.add({ kind: "skipped", path: file.path, args: [file.stat.size] });
@@ -1073,6 +1081,7 @@ export class SyncEngine {
       return true;
     }
     if (err.status === 413 && body.code === "file_too_large") {
+      this.deps.transfers?.fail(file.path, t("p.fail.tooBigServer", { size: formatBytes(file.stat.size), limit: formatBytes(body.maxFileBytes ?? 0) }));
       if (!this.warnedOversizedIds.has(file.path)) {
         this.warnedOversizedIds.add(file.path);
         new Notice(t("p.sync.tooBigServer", { path: file.path, size: formatBytes(file.stat.size), limit: formatBytes(body.maxFileBytes ?? 0) }), 15_000);
@@ -1080,6 +1089,7 @@ export class SyncEngine {
       return true;
     }
     if (err.status === 413 && body.code === "quota_exceeded") {
+      this.deps.transfers?.fail(file.path, t("p.fail.quota"));
       this.deps.onWriteRefused?.("storage-full");
       return true;
     }
@@ -1102,6 +1112,7 @@ export class SyncEngine {
     }
 
     if (Platform.isMobile && item.contentSize > this.mobileLimit()) {
+      this.deps.transfers?.fail(path, t("p.fail.tooBigMobile", { size: formatBytes(item.contentSize) }));
       if (!this.warnedOversizedIds.has(item.id)) {
         this.warnedOversizedIds.add(item.id);
         this.deps.log?.add({ kind: "skipped", path, args: [item.contentSize] });
@@ -1151,6 +1162,7 @@ export class SyncEngine {
     await this.deps.fs.deleteByPath(path);
     await this.deps.localIndex.delete(fileId);
     if (!isMarkerPath(path)) this.deps.log?.add({ kind: "delete-down", path });
+    this.deps.transfers?.clearFailure(path);
   }
 
   private bumpGlobalVersion(version: number): void {

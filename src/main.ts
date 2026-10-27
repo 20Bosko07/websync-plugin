@@ -97,7 +97,7 @@ export default class WebSyncPlugin extends Plugin {
     this.headerActions = new WebSyncHeaderActions(this, this.statusBar);
     this.statusBar.onRefresh = () => this.headerActions.refresh();
     this.app.workspace.onLayoutReady(() => this.headerActions.start());
-    this.progressRings = new ExplorerProgressRings(this.app, this.transfers);
+    this.progressRings = new ExplorerProgressRings(this.app, this.transfers, () => this.openSyncLog());
     this.app.workspace.onLayoutReady(() => this.progressRings.start());
 
     // Version history: a sidebar view (right by default, can be dragged anywhere like any Obsidian view), plus a

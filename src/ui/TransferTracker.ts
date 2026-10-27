@@ -43,8 +43,20 @@ const LINGER_MS = 900;
 /** A finished file keeps its full circle this long, then it goes - the others of the batch are still running. */
 const DONE_SHOWN_MS = 600;
 
+export interface FailedFile {
+  path: string;
+  reason: string;
+}
+
+export interface FailedFolder {
+  path: string;
+  count: number;
+}
+
 export class TransferTracker {
   private readonly transfers = new Map<string, Transfer>();
+  /** Files that could not be uploaded / downloaded and will not be retried by themselves (too big, refused, an error): why. */
+  private readonly failed = new Map<string, string>();
   private clearTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -60,6 +72,7 @@ export class TransferTracker {
   queue(paths: Iterable<string>, now = Date.now(), passive = false): void {
     this.cancelClear();
     for (const path of paths) {
+      this.failed.delete(path); // a new attempt
       const existing = this.transfers.get(path);
       if (existing && existing.state !== "done") continue;
       this.transfers.set(path, { state: "queued", loaded: 0, total: 0, since: now, passive });
@@ -81,6 +94,7 @@ export class TransferTracker {
 
   begin(path: string, total = 0, now = Date.now()): void {
     this.cancelClear();
+    this.failed.delete(path);
     const existing = this.transfers.get(path);
     // The circle counts from the real start. One that was shown while the change waited simply goes on.
     this.transfers.set(path, { state: "active", loaded: 0, total, since: now, shown: existing?.shown });
@@ -103,6 +117,35 @@ export class TransferTracker {
       transfer.total = Math.max(transfer.total, 1);
     }
     this.finishIfIdle();
+  }
+
+  /** This file did not make it: its circle turns into a red "!" that stays until the next attempt (or the file is gone). */
+  fail(path: string, reason: string): void {
+    this.transfers.delete(path);
+    this.failed.set(path, reason);
+    this.finishIfIdle();
+  }
+
+  /** The file is gone or was renamed: nothing to mark any more. */
+  clearFailure(path: string): void {
+    this.failed.delete(path);
+  }
+
+  failedFiles(): FailedFile[] {
+    return [...this.failed].map(([path, reason]) => ({ path, reason }));
+  }
+
+  /** The folders above failed files (any depth) with how many failed below them. */
+  failedFolders(): FailedFolder[] {
+    const counts = new Map<string, number>();
+    for (const path of this.failed.keys()) {
+      const parts = path.split("/");
+      for (let depth = 1; depth < parts.length; depth++) {
+        const folder = parts.slice(0, depth).join("/");
+        counts.set(folder, (counts.get(folder) ?? 0) + 1);
+      }
+    }
+    return [...counts].map(([path, count]) => ({ path, count }));
   }
 
   /** Something is queued or running (a lone edit that only waits for its debounce does not count). */

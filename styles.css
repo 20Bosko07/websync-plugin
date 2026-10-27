@@ -295,6 +295,20 @@ details[open] > .websync-section-title::before {
   stroke-linecap: round;
   transition: stroke-dasharray 0.2s linear;
 }
+/* A file that could not be synced: red circle with an exclamation mark (tap = the sync log). */
+.websync-progress-ring.is-failed {
+  transform: none;
+  cursor: pointer;
+}
+.websync-progress-ring .websync-fail-circle {
+  stroke: var(--text-error);
+}
+.websync-progress-ring .websync-fail-mark {
+  fill: none;
+  stroke: var(--text-error);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
 
 /* ---- Version history view (sidebar) ---- */
 .websync-history {
