@@ -23,6 +23,8 @@ const ICONS: Record<LogKind, string> = {
 /** Rows that need a look: shown in colour. */
 const PROBLEMS = new Set<LogKind>(["conflict", "skipped", "error"]);
 
+const isProblem = (entry: LogEntry): boolean => PROBLEMS.has(entry.kind) || (entry.kind === "summary" && Boolean(entry.args?.[2]));
+
 /** The dialog behind "Sync log" in the sync menu: what was synced when, newest first. */
 export class SyncLogModal extends Modal {
   private listEl!: HTMLElement;
@@ -76,7 +78,7 @@ export class SyncLogModal extends Modal {
   }
 
   private render(): void {
-    const entries = this.log.list().filter((entry) => !this.onlyProblems || PROBLEMS.has(entry.kind));
+    const entries = this.log.list().filter((entry) => !this.onlyProblems || isProblem(entry));
     this.listEl.empty();
     if (entries.length === 0) {
       this.listEl.createDiv({ cls: "websync-log-empty", text: t(this.onlyProblems ? "p.log.noProblems" : "p.log.empty") });
@@ -95,7 +97,7 @@ export class SyncLogModal extends Modal {
 
   private renderRow(entry: LogEntry): void {
     const row = this.listEl.createDiv({ cls: "websync-log-row" });
-    if (PROBLEMS.has(entry.kind)) row.addClass("is-problem");
+    if (isProblem(entry)) row.addClass("is-problem");
     setIcon(row.createSpan({ cls: "websync-log-icon" }), ICONS[entry.kind]);
     const body = row.createDiv({ cls: "websync-log-body" });
     body.createDiv({ cls: "websync-log-text", text: describe(entry) });
@@ -140,7 +142,8 @@ function dayLabel(at: number): string {
 
 function describe(entry: LogEntry): string {
   if (entry.kind === "summary") {
-    const [up, down] = entry.args ?? [0, 0];
+    const [up, down, failed] = entry.args ?? [0, 0, 0];
+    if (failed) return t("p.log.summaryFailed", { up, down, failed });
     if (!up && !down) return t("p.log.summaryNone");
     return t("p.log.summary", { up, down });
   }
@@ -168,7 +171,7 @@ function detail(entry: LogEntry): string {
       if (typeof first === "string") parts.push(t("p.log.copySaved", { path: first }));
       break;
     case "error":
-      if (typeof first === "string") parts.push(first);
+      for (const arg of entry.args ?? []) if (typeof arg === "string") parts.push(arg);
       break;
   }
   return parts.join(" · ");

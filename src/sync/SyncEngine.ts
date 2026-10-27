@@ -14,6 +14,7 @@ import type { LocalIndex, LocalIndexRecord } from "./LocalIndex.js";
 import type { FileSystemAdapter } from "./FileSystemAdapter.js";
 import type { TransferTracker } from "../ui/TransferTracker.js";
 import type { LogReason, SyncLog } from "./SyncLog.js";
+import { errorArgs } from "./errorArgs.js";
 import { t } from "../i18n/index.js";
 import { TransferCancelled, WebSyncApiError } from "./httpClient.js";
 
@@ -22,6 +23,16 @@ const MERGE_MAX_BYTES = 1024 * 1024;
 const isMergeablePath = (path: string): boolean => /\.(md|txt)$/i.test(path);
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
+/** A file that failed is left alone this long before the next attempt; the rest of the sync does not wait for it. */
+const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
+/** After this many failures in a row a file is put aside (the sync moves on without it) until a manual sync or a restart. */
+const MAX_FILE_ATTEMPTS = 3;
+
+/** Errors that say "nothing will work right now" (offline, signed out, server down) - those still stop the whole run. */
+function isFatal(err: unknown): boolean {
+  if (!(err instanceof WebSyncApiError)) return false;
+  return err.status === 0 || err.status === 401 || err.status === 403 || err.status >= 502;
+}
 
 function decodeText(bytes: Uint8Array): string | null {
   try {
@@ -116,6 +127,12 @@ export class SyncEngine {
 
   /** Set by `dispose()`: a sync that is still running (the first one runs in the background) stops at its next file. */
   private disposed = false;
+  /** Per file (or remote item) that failed: when it may be tried again, and how many times in a row it failed. */
+  private readonly failed = new Map<string, { until: number; count: number }>();
+  /** Files that failed (or were held back) in the run that is going / went last. */
+  private runFailures = 0;
+  /** After a full sync with failures: when the next poll runs the full sync again (it is the only one that retries local files). */
+  private fullSyncRetryAt: number | null = null;
   private mobileLimit(): number {
     return this.deps.mobileMaxFileBytes?.() ?? MOBILE_MAX_SYNC_FILE_SIZE_BYTES;
   }
@@ -200,10 +217,16 @@ export class SyncEngine {
     const log = this.deps.log;
     const upBefore = log?.total("up") ?? 0;
     const downBefore = log?.total("down") ?? 0;
+    this.runFailures = 0;
     try {
       await this.doFullSync();
+      // What failed must be fetched again: the cursor stays where it was, and the poll runs a full sync once the pause is over.
+      if (this.runFailures > 0) {
+        this.currentGlobalVersion = cursorBefore;
+        this.fullSyncRetryAt = Date.now() + FAILURE_BACKOFF_MS;
+      } else this.fullSyncRetryAt = null;
       await this.persistState();
-      log?.add({ kind: "summary", args: [(log.total("up") - upBefore), (log.total("down") - downBefore)] });
+      log?.add({ kind: "summary", args: [log.total("up") - upBefore, log.total("down") - downBefore, this.runFailures] });
     } catch (err) {
       this.currentGlobalVersion = cursorBefore;
       this.logError(err);
@@ -217,7 +240,9 @@ export class SyncEngine {
 
   async runIncrementalPoll(): Promise<void> {
     if (this.deps.isPaused() || this.syncing) return;
+    if (this.fullSyncRetryAt !== null && Date.now() >= this.fullSyncRetryAt) return this.runFullSync();
     this.syncing = true;
+    this.runFailures = 0;
     try {
       await this.doIncrementalPoll();
       await this.persistState();
@@ -230,8 +255,46 @@ export class SyncEngine {
     }
   }
 
-  private logError(err: unknown): void {
-    this.deps.log?.add({ kind: "error", args: [err instanceof Error ? err.message : String(err)] });
+  private logError(err: unknown, path?: string): void {
+    this.deps.log?.add({ kind: "error", path, args: errorArgs(err) });
+  }
+
+  /** A manual sync tries everything again, including the files that were put aside. */
+  retryFailed(): void {
+    this.failed.clear();
+    this.fullSyncRetryAt = null;
+  }
+
+  /** How many files the last full sync or poll could not handle (they are retried; see the sync log for why). */
+  get failedCount(): number {
+    return this.runFailures;
+  }
+
+  /**
+   * Runs the work for one file. A failure of that file (a server error for it, a file that cannot be read) is logged and
+   * skipped, so one bad file does not stop the others; it is tried again after a pause. Failures that hit every file
+   * (offline, signed out) still end the run.
+   */
+  private async attempt(key: string, path: string | undefined, action: () => Promise<void>): Promise<boolean> {
+    const previous = this.failed.get(key);
+    if (previous && previous.until > Date.now()) {
+      // Put aside for good: the sync carries on (and its cursor with it) instead of waiting for this file forever.
+      if (previous.count < MAX_FILE_ATTEMPTS) this.runFailures++;
+      return false;
+    }
+    try {
+      await action();
+      this.failed.delete(key);
+      return true;
+    } catch (err) {
+      if (this.disposed || isFatal(err)) throw err;
+      console.error(`WebSync: "${path ?? key}" konnte nicht synchronisiert werden`, err);
+      const count = (previous?.count ?? 0) + 1;
+      this.failed.set(key, { until: count >= MAX_FILE_ATTEMPTS ? Number.POSITIVE_INFINITY : Date.now() + FAILURE_BACKOFF_MS, count });
+      if (count < MAX_FILE_ATTEMPTS) this.runFailures++;
+      this.logError(err, path);
+      return false;
+    }
   }
 
   handleLocalEvent(type: LocalEventType, file: TAbstractFile): void {
@@ -280,6 +343,7 @@ export class SyncEngine {
         .catch((err) => {
           if ((err as { status?: unknown } | null)?.status === 402) this.deps.onWriteRefused?.("read-only");
           console.error(`WebSync: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
+          this.logError(err, key.replace(/^folder:/, ""));
         })
         .finally(() => {
           if (queuedPath) this.deps.transfers?.release(queuedPath);
@@ -474,8 +538,8 @@ export class SyncEngine {
     // --- Phase A ---
     for (const record of indexRecords) {
       if (this.disposed) return;
-      await this.withFileLock(record.fileId, () =>
-        this.reconcileIndexedRecord(record, remoteById, localByPath, handledPaths, allowLocalDeletes),
+      await this.attempt(record.fileId, record.localPath, () =>
+        this.withFileLock(record.fileId, () => this.reconcileIndexedRecord(record, remoteById, localByPath, handledPaths, allowLocalDeletes)),
       );
     }
 
@@ -493,14 +557,16 @@ export class SyncEngine {
       }
       if (this.deps.isConfigPath(path) || handledPaths.has(path)) continue;
 
-      await this.withFileLock(item.id, async () => {
-        const localFile = localByPath.get(path);
-        if (localFile) {
-          await this.reconcileExisting(item, path, localFile);
-        } else {
-          await this.downloadFile(item, path, "new");
-        }
-      });
+      await this.attempt(item.id, path, () =>
+        this.withFileLock(item.id, async () => {
+          const localFile = localByPath.get(path);
+          if (localFile) {
+            await this.reconcileExisting(item, path, localFile);
+          } else {
+            await this.downloadFile(item, path, "new");
+          }
+        }),
+      );
       handledPaths.add(path);
     }
 
@@ -509,7 +575,7 @@ export class SyncEngine {
       if (this.disposed) return;
       if (handledPaths.has(path)) continue;
       const fileId = crypto.randomUUID();
-      await this.withFileLock(fileId, () => this.uploadFile(file, fileId, undefined, "new"));
+      await this.attempt(`path:${path}`, path, () => this.withFileLock(fileId, () => this.uploadFile(file, fileId, undefined, "new")));
       handledPaths.add(path);
     }
 
@@ -518,7 +584,7 @@ export class SyncEngine {
       const markerPath = markerPathFor(folder.path);
       if (handledPaths.has(markerPath) || (await this.deps.localIndex.getByPath(markerPath))) continue;
       const fileId = crypto.randomUUID();
-      await this.withFileLock(fileId, () => this.uploadMarker(fileId, markerPath));
+      await this.attempt(`path:${markerPath}`, folder.path, () => this.withFileLock(fileId, () => this.uploadMarker(fileId, markerPath)));
       handledPaths.add(markerPath);
     }
   }
@@ -651,10 +717,12 @@ export class SyncEngine {
     const changes = [...remoteResp.files].sort((a, b) => a.version - b.version);
     await this.announceRemoteChanges(changes);
     for (const item of changes) {
-      await this.withFileLock(item.id, () => this.applyRemoteChange(item));
-      this.bumpGlobalVersion(item.version);
+      const done = await this.attempt(item.id, undefined, () => this.withFileLock(item.id, () => this.applyRemoteChange(item)));
+      if (done) this.bumpGlobalVersion(item.version);
     }
-    this.bumpGlobalVersion(remoteResp.currentVersion);
+    // A change that could not be applied must be fetched again, and the others after it come with it: back to where this poll began.
+    if (this.runFailures > 0) this.currentGlobalVersion = since;
+    else this.bumpGlobalVersion(remoteResp.currentVersion);
   }
 
   /** Several files changed elsewhere: they show as waiting circles until they are downloaded. */

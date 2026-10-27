@@ -556,9 +556,11 @@ export default class WebSyncPlugin extends Plugin {
     new Notice(t("p.syncStarted"));
     this.statusBar?.refresh();
     try {
+      this.syncEngine.retryFailed();
       await this.syncEngine.runFullSync();
       await this.configSyncEngine?.run();
-      new Notice(t("p.syncDone"));
+      const failed = this.syncEngine.failedCount;
+      new Notice(failed > 0 ? t("p.syncPartial", { count: failed }) : t("p.syncDone"));
     } catch (err) {
       console.error("WebSync: Synchronisierung fehlgeschlagen", err);
       new Notice(t("p.syncFailed", { error: (err as Error).message }));

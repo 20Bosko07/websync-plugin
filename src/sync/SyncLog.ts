@@ -72,7 +72,7 @@ export class SyncLog {
     const next: LogEntry = { ...entry, args, at: Date.now() };
     const last = this.entries[this.entries.length - 1];
     // The same failure on every poll must not fill the log.
-    if (last && next.kind === "error" && last.kind === "error" && last.args?.[0] === next.args?.[0]) {
+    if (last && next.kind === "error" && last.kind === "error" && last.path === next.path && last.args?.[0] === next.args?.[0]) {
       last.at = next.at;
     } else {
       this.entries.push(next);

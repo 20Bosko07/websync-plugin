@@ -32,6 +32,8 @@ export class WebSyncApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly body?: unknown,
+    /** `PUT /vaults/1a2b3c4d…/files/…`: which request failed, for the sync log. */
+    public readonly request?: string,
   ) {
     super(message);
     this.name = "WebSyncApiError";
@@ -58,6 +60,12 @@ export interface RequestOptions {
   raw?: Uint8Array;
   /** Extra request headers (e.g. `Range`). */
   headers?: Record<string, string>;
+}
+
+/** `METHOD /path` with ids cut short - enough to tell the endpoint apart in the log. */
+function describeRequest(options: RequestOptions): string {
+  const path = options.path.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => `${id.slice(0, 8)}…`);
+  return `${options.method ?? "GET"} ${path}`;
 }
 
 function trimTrailingSlash(url: string): string {
@@ -132,12 +140,14 @@ async function doRequest(serverUrl: string, options: RequestOptions): Promise<Ra
       url,
       method: options.method ?? "GET",
       headers,
+      // Obsidian's own field as well as the header: the mobile HTTP layer goes by this one.
+      contentType: headers["Content-Type"],
       body,
       throw: false,
     });
     return { status: response.status, arrayBuffer: response.arrayBuffer, text: response.text };
   } catch (err) {
-    throw new WebSyncApiError(t("p.http.network", { url, error: (err as Error).message }), 0);
+    throw new WebSyncApiError(t("p.http.network", { url, error: (err as Error).message }), 0, undefined, describeRequest(options));
   }
 }
 
@@ -150,20 +160,21 @@ function parseErrorBody(text: string): unknown {
   }
 }
 
-function throwIfNotOk(response: RawResponse, path: string): void {
+function throwIfNotOk(response: RawResponse, options: RequestOptions): void {
+  const path = options.path;
   if (response.status >= 200 && response.status < 300) return;
   const errorBody = parseErrorBody(response.text);
   const message =
     (errorBody as { message?: string; error?: string } | undefined)?.message ??
     (errorBody as { message?: string; error?: string } | undefined)?.error ??
     t("p.http.status", { path, status: response.status });
-  throw new WebSyncApiError(message, response.status, errorBody);
+  throw new WebSyncApiError(message, response.status, errorBody, describeRequest(options));
 }
 
 /** Performs a request and parses a JSON response (or returns undefined for empty/non-JSON responses). */
 export async function apiRequest<T>(serverUrl: string, options: RequestOptions): Promise<T> {
   const response = await doRequest(serverUrl, options);
-  throwIfNotOk(response, options.path);
+  throwIfNotOk(response, options);
 
   if (response.status === 204 || !response.text) return undefined as T;
   try {
@@ -176,6 +187,6 @@ export async function apiRequest<T>(serverUrl: string, options: RequestOptions):
 /** Performs a request and returns the raw response body as bytes (e.g. an encrypted file blob). */
 export async function apiRequestBinary(serverUrl: string, options: RequestOptions): Promise<Uint8Array> {
   const response = await doRequest(serverUrl, options);
-  throwIfNotOk(response, options.path);
+  throwIfNotOk(response, options);
   return new Uint8Array(response.arrayBuffer);
 }

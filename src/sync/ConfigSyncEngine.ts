@@ -35,6 +35,7 @@ import type { ConfigSyncSettings } from "../types.js";
 import type { CryptoService } from "./CryptoService.js";
 import type { DecodedFileListItem, RemoteApiClient } from "./RemoteApiClient.js";
 import type { SyncLog } from "./SyncLog.js";
+import { errorArgs } from "./errorArgs.js";
 
 type ConfigCategory = Exclude<keyof ConfigSyncSettings, "enabled" | "lastSyncedGlobalVersion" | "known">;
 
@@ -102,6 +103,9 @@ export class ConfigSyncEngine {
     this.syncing = true;
     try {
       await this.reconcile(settings);
+    } catch (err) {
+      this.deps.log?.add({ kind: "error", path: t("p.log.settingsPath"), args: errorArgs(err) });
+      throw err;
     } finally {
       this.syncing = false;
     }
