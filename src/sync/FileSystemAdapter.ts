@@ -1,5 +1,19 @@
 import { normalizePath, TFile, TFolder, type App } from "obsidian";
 
+/**
+ * Remote paths are authored by other devices of the vault. Reject anything that could leave the vault root
+ * (parent segments, absolute or drive paths, backslashes) before it reaches a write, rename or delete.
+ */
+export function assertInsideVault(path: string): void {
+  const bad =
+    path.includes("\\") ||
+    path.includes("\u0000") ||
+    path.startsWith("/") ||
+    /^[a-zA-Z]:/.test(path) ||
+    path.split("/").some((segment) => segment === ".." || segment === ".");
+  if (bad) throw new Error("Refusing a path outside the vault: " + JSON.stringify(path));
+}
+
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -94,6 +108,7 @@ export class FileSystemAdapter {
 
   /** Creates or overwrites the file at `path` with `data`, creating parent folders as needed. */
   async writeBinary(path: string, data: Uint8Array): Promise<void> {
+    assertInsideVault(path);
     const normalized = normalizePath(path);
     const existing = this.getFileByPath(normalized);
     const arrayBuffer = toArrayBuffer(data);
@@ -116,6 +131,7 @@ export class FileSystemAdapter {
   }
 
   async deleteByPath(path: string): Promise<void> {
+    assertInsideVault(path);
     const normalized = normalizePath(path);
     const file = this.getFileByPath(normalized);
     if (file) {
@@ -137,6 +153,8 @@ export class FileSystemAdapter {
   }
 
   async renamePath(oldPath: string, newPath: string): Promise<void> {
+    assertInsideVault(oldPath);
+    assertInsideVault(newPath);
     const normalizedOld = normalizePath(oldPath);
     const normalizedNew = normalizePath(newPath);
     if (normalizedOld === normalizedNew) return;

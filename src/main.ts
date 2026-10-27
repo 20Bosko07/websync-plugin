@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { normalizePath, Notice, Plugin, TFile } from "obsidian";
 import { applyHistoryTexts, t } from "./i18n";
 import { REMOTE_POLL_INTERVAL_MS, toBase64, type MeResponse } from "@websync/shared";
 import { DEFAULT_SETTINGS, type WebSyncSettings } from "./types.js";
@@ -312,7 +312,7 @@ export default class WebSyncPlugin extends Plugin {
       localIndex,
       isPaused: () => this.settings.syncPaused,
       mobileMaxFileBytes: () => (this.settings.mobileMaxFileMb > 0 ? this.settings.mobileMaxFileMb * 1024 * 1024 : Number.POSITIVE_INFINITY),
-      isConfigPath: (path) => path.startsWith(configDirPrefix),
+      isConfigPath: (path) => normalizePath(path).toLowerCase().startsWith(configDirPrefix.toLowerCase()),
       isCollabLive: (fileId) => this.collabManager?.isLive(fileId) ?? false,
       transfers: this.transfers,
       log: this.syncLog,

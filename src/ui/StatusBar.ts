@@ -9,6 +9,7 @@
 import { t } from "../i18n/index.js";
 import { type App, Menu, Notice } from "obsidian";
 import type WebSyncPlugin from "../main.js";
+import { openExternal } from "../openExternal.js";
 
 export type Status =
   | { kind: "not-configured" }
@@ -100,7 +101,7 @@ export class WebSyncStatusBar {
         item
           .setTitle(t("p.openPlan"))
           .setIcon("external-link")
-          .onClick(() => window.open(planUrl, "_blank")),
+          .onClick(() => openExternal(planUrl)),
       );
     }
 

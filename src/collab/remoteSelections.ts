@@ -136,8 +136,11 @@ class RemoteSelectionsPlugin {
       const anchorIndex = clamp(anchor.index);
       const headIndex = clamp(head.index);
 
-      const { color = "#30bced", name = "Anonymous" } = state.user ?? {};
-      const colorLight: string = state.user?.colorLight ?? `${color}33`;
+      // Awareness comes from other devices and ends up in a style attribute, so only plain hex colours pass.
+      const hex = (v: unknown, fallback: string) => (typeof v === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(v) ? v : fallback);
+      const { name = "Anonymous" } = state.user ?? {};
+      const color = hex(state.user?.color, "#30bced");
+      const colorLight = hex(state.user?.colorLight, `${color}33`);
       const start = Math.min(anchorIndex, headIndex);
       const end = Math.max(anchorIndex, headIndex);
       const startLine = doc.lineAt(start);

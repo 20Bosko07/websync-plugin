@@ -8,6 +8,7 @@ import { VaultLinkError, type VaultLinkResult } from "../sync/VaultLinkManager.j
 import { WebSyncApiError } from "../sync/httpClient.js";
 import { formatBytes } from "../ui/historyFormat.js";
 import { HOSTED_SERVER_URL, normalizeServerUrl } from "../hosted.js";
+import { openExternal } from "../openExternal.js";
 
 type PairingState = "idle" | "starting" | "waiting" | "denied" | "expired" | "error";
 
@@ -332,7 +333,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
       // browser from an Obsidian plugin on both Electron desktop and mobile
       // WebView. The clickable link rendered above is the fallback in case
       // this doesn't fire in some environment.
-      window.open(result.verificationUrl, "_blank");
+      openExternal(result.verificationUrl);
       this.startPolling();
     } catch (err) {
       this.pairingState = "error";
@@ -519,7 +520,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
 
     if (account.billingState !== "unmanaged" && account.webUrl) {
       const planUrl = `${account.webUrl.replace(/\/+$/, "")}/account/billing`;
-      setting.addButton((btn) => btn.setButtonText(t("p.openPlanBtn")).onClick(() => window.open(planUrl, "_blank")));
+      setting.addButton((btn) => btn.setButtonText(t("p.openPlanBtn")).onClick(() => openExternal(planUrl)));
     }
   }
 
@@ -545,7 +546,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     const containerEl = this.section(parent, "plan", t("p.plan.title"), { summary: stateLabel });
     const date = (iso: string) => new Date(iso).toLocaleDateString();
     const webUrl = (this.plugin.account?.webUrl ?? this.plugin.serverUrl).replace(/\/+$/, "");
-    const openPlanPage = () => window.open(`${webUrl}/account/billing`, "_blank");
+    const openPlanPage = () => openExternal(`${webUrl}/account/billing`);
 
     // Storage with its bar.
     const used = info.usedBytes;
