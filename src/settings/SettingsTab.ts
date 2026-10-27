@@ -1,6 +1,7 @@
 import { showsPlanSection } from "../sync/billing.js";
 import { t } from "../i18n/index.js";
 import { App, Notice, Platform, PluginSettingTab, Setting, type TextComponent } from "obsidian";
+import { defaultDeviceName } from "../deviceName.js";
 import type WebSyncPlugin from "../main.js";
 import type { LinkedVaultConfig } from "../types.js";
 import { VaultLinkError, type VaultLinkResult } from "../sync/VaultLinkManager.js";
@@ -312,7 +313,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
   }
 
   private defaultDeviceName(): string {
-    return t("p.defaultDevice", { platform: Platform.isMobile ? "Mobile" : navigator.platform || "Desktop" });
+    return defaultDeviceName();
   }
 
   private async startDevicePairing(): Promise<void> {

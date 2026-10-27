@@ -20,6 +20,7 @@ import type { CollabPresence } from "../collab/CollabManager.js";
 import { describeStatus, type WebSyncStatusBar } from "./StatusBar.js";
 
 const REFRESH_INTERVAL_MS = 1000;
+const ACTION_CLASS = "websync-header-action";
 const MAX_AVATARS = 3;
 
 interface HeaderAction {
@@ -54,6 +55,8 @@ export class WebSyncHeaderActions {
     this.timer = null;
     for (const { el } of this.actions.values()) el.remove();
     this.actions.clear();
+    // Also what an earlier instance of the plugin (reload, update) or a lost entry left behind in a tab header.
+    document.querySelectorAll(`.${ACTION_CLASS}`).forEach((el) => el.remove());
   }
 
   refresh(): void {
@@ -65,9 +68,17 @@ export class WebSyncHeaderActions {
       if (!(view instanceof ItemView)) return;
       seen.add(view);
       let action = this.actions.get(view);
+      // The icon lives in the tab's own header and outlasts our bookkeeping (a tab that was moved or re-laid-out for a moment, a plugin
+      // reload): look at what is really there, keep ours if it is still in the header, drop everything else, and never add a second.
+      const present = Array.from(view.containerEl.querySelectorAll<HTMLElement>(`.${ACTION_CLASS}`));
+      if (action && !present.includes(action.el)) {
+        this.actions.delete(view);
+        action = undefined;
+      }
+      for (const extra of present) if (extra !== action?.el) extra.remove();
       if (!action) {
         const el = view.addAction("cloud", "WebSync", (evt) => this.onClick(evt, view));
-        el.addClass("websync-header-action");
+        el.addClass(ACTION_CLASS);
         action = { el, signature: "" };
         this.actions.set(view, action);
       }
