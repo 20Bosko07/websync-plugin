@@ -116,7 +116,8 @@ class RemoteSelectionsPlugin {
         if (local.cursor == null || !Y.compareRelativePositions(currentAnchor, anchor) || !Y.compareRelativePositions(currentHead, head)) {
           awareness.setLocalStateField("cursor", { anchor, head });
         }
-      } else if (local.cursor != null && hasFocus) {
+      } else if (local.cursor != null) {
+        // Not editing here any more (focus went elsewhere): take the cursor away instead of leaving it behind on the other devices.
         awareness.setLocalStateField("cursor", null);
       }
     }
