@@ -27,6 +27,8 @@ const textEncoder = new TextEncoder();
 const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 /** After this many failures in a row a file is put aside (the sync moves on without it) until a manual sync or a restart. */
 const MAX_FILE_ATTEMPTS = 3;
+/** An edit is only sent after a sync of the server's changes that is at most this old (see `catchUp`). */
+const CATCH_UP_FRESH_MS = 15_000;
 
 /** Errors that say "nothing will work right now" (offline, signed out, server down) - those still stop the whole run. */
 function isFatal(err: unknown): boolean {
@@ -129,6 +131,8 @@ export class SyncEngine {
   private disposed = false;
   /** Per file (or remote item) that failed: when it may be tried again, and how many times in a row it failed. */
   private readonly failed = new Map<string, { until: number; count: number }>();
+  /** When a full sync / poll last finished: how up to date this device is with the server's renames and edits. */
+  private lastSyncedAt = 0;
   /** Files that failed (or were held back) in the run that is going / went last. */
   private runFailures = 0;
   /** After a full sync with failures: when the next poll runs the full sync again (it is the only one that retries local files). */
@@ -220,6 +224,7 @@ export class SyncEngine {
     this.runFailures = 0;
     try {
       await this.doFullSync();
+      this.lastSyncedAt = Date.now();
       // What failed must be fetched again: the cursor stays where it was, and the poll runs a full sync once the pause is over.
       if (this.runFailures > 0) {
         this.currentGlobalVersion = cursorBefore;
@@ -245,6 +250,7 @@ export class SyncEngine {
     this.runFailures = 0;
     try {
       await this.doIncrementalPoll();
+      this.lastSyncedAt = Date.now();
       await this.persistState();
     } catch (err) {
       this.logError(err);
@@ -394,8 +400,12 @@ export class SyncEngine {
       return;
     }
 
+    // An upload carries the file's path. If another device moved or renamed the note while this one was away (or busy), sending the
+    // edit now would put it back at its old place: first take over what the server has changed.
+    if (type !== "create" && (await this.deps.localIndex.getByPath(path))) await this.catchUp();
+
     const file = this.deps.fs.getFileByPath(path);
-    if (!file) return; // vanished again before the debounce fired
+    if (!file) return; // vanished again before the debounce fired (or moved by the sync that just ran - it sends the edit from its new place)
 
     const record = await this.deps.localIndex.getByPath(path);
     const fileId = record?.fileId ?? crypto.randomUUID();
@@ -407,6 +417,24 @@ export class SyncEngine {
       if (record && record.lastContentHashBlinded === toBase64(hash)) return; // no real content change (e.g. mtime-only touch)
       await this.uploadFile(file, fileId, { plaintext, hash }, record ? "local" : "new");
     });
+  }
+
+  /**
+   * Brings this device up to date with the server before a local edit is sent, unless that happened just now: renames and
+   * moves from other devices are applied first, so an edit made at the old path cannot undo them. A sync that is already
+   * running does the same job, so it is waited for instead.
+   */
+  private async catchUp(): Promise<void> {
+    if (Date.now() - this.lastSyncedAt < CATCH_UP_FRESH_MS) return;
+    for (let waited = 0; this.syncing && waited < 10_000; waited += 100) {
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    if (this.syncing || this.disposed) return;
+    try {
+      await this.runIncrementalPoll();
+    } catch {
+      // Offline or the server is down: the upload fails the same way and is tried again with the next change.
+    }
   }
 
   private async processLocalRename(oldPath: string, newPath: string): Promise<void> {
