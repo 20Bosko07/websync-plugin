@@ -1,6 +1,6 @@
 {
   "name": "websync-plugin",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": true,
   "type": "module",
   "description": "End-to-end encrypted vault sync with your own WebSync server.",

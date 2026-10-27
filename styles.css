@@ -597,3 +597,111 @@ details[open] > .websync-section-title::before {
 .websync-publish-actions .websync-publish-stop {
   margin-right: auto;
 }
+
+/* ---- Sync log dialog ------------------------------------------------------- */
+
+.websync-log {
+  width: min(560px, 96vw);
+}
+
+.websync-log-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.websync-log-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.websync-log-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.websync-log-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.websync-log-day {
+  position: sticky;
+  top: 0;
+  padding: 6px 0 4px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.websync-log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.websync-log-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.websync-log-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.websync-log-row.is-problem .websync-log-icon,
+.websync-log-row.is-problem .websync-log-text {
+  color: var(--text-error);
+}
+
+.websync-log-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.websync-log-text {
+  font-size: var(--font-ui-small);
+}
+
+.websync-log-path,
+.websync-log-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.websync-log-detail {
+  white-space: normal;
+}
+
+.websync-log-path.is-link {
+  cursor: pointer;
+}
+
+.websync-log-path.is-link:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+.websync-log-time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}

@@ -13,6 +13,7 @@ import type { DecodedFileListItem, RemoteApiClient } from "./RemoteApiClient.js"
 import type { LocalIndex, LocalIndexRecord } from "./LocalIndex.js";
 import type { FileSystemAdapter } from "./FileSystemAdapter.js";
 import type { TransferTracker } from "../ui/TransferTracker.js";
+import type { LogReason, SyncLog } from "./SyncLog.js";
 import { t } from "../i18n/index.js";
 import { TransferCancelled, WebSyncApiError } from "./httpClient.js";
 
@@ -49,6 +50,8 @@ export interface SyncEngineDeps {
   isCollabLive?: (fileId: string) => boolean;
   /** Receives the progress of uploads/downloads (explorer rings). Optional so the engine works without UI. */
   transfers?: TransferTracker;
+  /** The sync log dialog's record of what happened. */
+  log?: SyncLog;
   /** The vault-wide `currentVersion` this device last fully applied - the `since=` cursor for incremental polling. */
   initialGlobalVersion: number;
   onStateChange: (state: { lastSyncAt: string; globalVersion: number }) => void | Promise<void>;
@@ -194,11 +197,16 @@ export class SyncEngine {
     // A full sync moves the cursor while it works. If it dies half way, the files it did not reach must be fetched
     // again by the next poll - so the cursor goes back to where it was instead of staying at the newest version seen.
     const cursorBefore = this.currentGlobalVersion;
+    const log = this.deps.log;
+    const upBefore = log?.total("up") ?? 0;
+    const downBefore = log?.total("down") ?? 0;
     try {
       await this.doFullSync();
       await this.persistState();
+      log?.add({ kind: "summary", args: [(log.total("up") - upBefore), (log.total("down") - downBefore)] });
     } catch (err) {
       this.currentGlobalVersion = cursorBefore;
+      this.logError(err);
       throw err;
     } finally {
       this.syncing = false;
@@ -213,10 +221,17 @@ export class SyncEngine {
     try {
       await this.doIncrementalPoll();
       await this.persistState();
+    } catch (err) {
+      this.logError(err);
+      throw err;
     } finally {
       this.syncing = false;
       this.deps.transfers?.dropQueued();
     }
+  }
+
+  private logError(err: unknown): void {
+    this.deps.log?.add({ kind: "error", args: [err instanceof Error ? err.message : String(err)] });
   }
 
   handleLocalEvent(type: LocalEventType, file: TAbstractFile): void {
@@ -326,7 +341,7 @@ export class SyncEngine {
       if (!plaintext) return; // deleted meanwhile
       const hash = await this.deps.crypto.hashContent(plaintext);
       if (record && record.lastContentHashBlinded === toBase64(hash)) return; // no real content change (e.g. mtime-only touch)
-      await this.uploadFile(file, fileId, { plaintext, hash });
+      await this.uploadFile(file, fileId, { plaintext, hash }, record ? "local" : "new");
     });
   }
 
@@ -342,6 +357,7 @@ export class SyncEngine {
       const encryptedPath = await this.deps.crypto.encryptPath(newPath);
       await this.deps.remote.renameFile(this.deps.vaultId, record.fileId, encryptedPath.ciphertext, encryptedPath.iv);
       await this.deps.localIndex.put({ ...record, localPath: newPath, lastSyncedAt: new Date().toISOString() });
+      if (!isMarkerPath(newPath)) this.deps.log?.add({ kind: "rename-up", path: newPath, args: [oldPath] });
     });
   }
 
@@ -414,6 +430,7 @@ export class SyncEngine {
     if (!(await this.deps.localIndex.get(record.fileId))) return; // already handled
     await this.deps.remote.deleteFile(this.deps.vaultId, record.fileId);
     await this.deps.localIndex.delete(record.fileId);
+    if (!isMarkerPath(record.localPath)) this.deps.log?.add({ kind: "delete-up", path: record.localPath });
   }
 
   // ============================================================
@@ -481,7 +498,7 @@ export class SyncEngine {
         if (localFile) {
           await this.reconcileExisting(item, path, localFile);
         } else {
-          await this.downloadFile(item, path);
+          await this.downloadFile(item, path, "new");
         }
       });
       handledPaths.add(path);
@@ -492,7 +509,7 @@ export class SyncEngine {
       if (this.disposed) return;
       if (handledPaths.has(path)) continue;
       const fileId = crypto.randomUUID();
-      await this.withFileLock(fileId, () => this.uploadFile(file, fileId));
+      await this.withFileLock(fileId, () => this.uploadFile(file, fileId, undefined, "new"));
       handledPaths.add(path);
     }
 
@@ -556,7 +573,7 @@ export class SyncEngine {
 
     if (!remoteItem) {
       // Server has no memory of this fileId at all (e.g. vault reset server-side).
-      if (localFile) await this.uploadFile(localFile, record.fileId);
+      if (localFile) await this.uploadFile(localFile, record.fileId, undefined, "new");
       else await this.deps.localIndex.delete(record.fileId);
       return;
     }
@@ -570,7 +587,7 @@ export class SyncEngine {
       } else if (await this.remoteDeleteWins(record, localFile, remoteItem.updatedAt)) {
         await this.applyRemoteDelete(record.fileId, record.localPath);
       } else {
-        await this.uploadFile(localFile, record.fileId); // local edit after remote delete wins (LWW) - resurrects it server-side
+        await this.uploadFile(localFile, record.fileId, undefined, "restored"); // local edit after remote delete wins (LWW) - resurrects it server-side
       }
       this.bumpGlobalVersion(remoteItem.version);
       return;
@@ -586,6 +603,7 @@ export class SyncEngine {
 
     if (path !== record.localPath) {
       await this.deps.fs.renamePath(record.localPath, path); // no-op if the local file is already missing
+      if (!isMarkerPath(path)) this.deps.log?.add({ kind: "rename-down", path, args: [record.localPath] });
       handledPaths.add(path);
     }
 
@@ -604,7 +622,7 @@ export class SyncEngine {
       }
       if (await this.deps.fs.existsOnDisk(path)) {
         // On disk but not in Obsidian's index (unknown extension): only fetch it when another device changed it.
-        if (!remoteUnchanged) await this.downloadFile(remoteItem, path);
+        if (!remoteUnchanged) await this.downloadFile(remoteItem, path, "remote");
         return;
       }
       if (allowLocalDeletes && remoteUnchanged && samePath) {
@@ -613,7 +631,7 @@ export class SyncEngine {
         return;
       }
       // Changed on another device since the last sync (that edit wins over the delete), or renamed remotely: restore it.
-      await this.downloadFile(remoteItem, path);
+      await this.downloadFile(remoteItem, path, "restored");
       return;
     }
 
@@ -670,7 +688,7 @@ export class SyncEngine {
         } else if (await this.remoteDeleteWins(record, localFile, item.updatedAt)) {
           await this.applyRemoteDelete(item.id, record.localPath);
         } else {
-          await this.uploadFile(localFile, item.id); // local edit after remote delete wins (LWW)
+          await this.uploadFile(localFile, item.id, undefined, "restored"); // local edit after remote delete wins (LWW)
         }
       }
       this.bumpGlobalVersion(item.version);
@@ -688,11 +706,12 @@ export class SyncEngine {
 
     if (record && record.localPath !== path) {
       await this.deps.fs.renamePath(record.localPath, path);
+      if (!isMarkerPath(path)) this.deps.log?.add({ kind: "rename-down", path, args: [record.localPath] });
     }
 
     const localFile = this.deps.fs.getFileByPath(path);
     if (!localFile) {
-      await this.downloadFile(item, path);
+      await this.downloadFile(item, path, record ? "restored" : "new");
       return;
     }
     await this.reconcileExisting(item, path, localFile);
@@ -753,9 +772,9 @@ export class SyncEngine {
 
     if (remoteWins) {
       if (live) return; // the live session already carries this content
-      await this.downloadFile(item, path);
+      await this.downloadFile(item, path, bothChanged ? "newer" : "remote");
     } else {
-      await this.uploadFile(localFile, item.id, { plaintext: localBytes, hash: localHash });
+      await this.uploadFile(localFile, item.id, { plaintext: localBytes, hash: localHash }, bothChanged ? "newer" : "local");
     }
   }
 
@@ -814,15 +833,16 @@ export class SyncEngine {
       return false;
     }
     if (merged === remoteText) {
-      await this.downloadFile(item, path);
+      await this.downloadFile(item, path, "newer");
     } else if (merged === localText) {
-      await this.uploadFile(localFile, item.id, { plaintext: localBytes, hash: await this.deps.crypto.hashContent(localBytes) });
+      await this.uploadFile(localFile, item.id, { plaintext: localBytes, hash: await this.deps.crypto.hashContent(localBytes) }, "newer");
     } else {
       const bytes = textEncoder.encode(merged);
       await this.deps.fs.writeBinary(path, bytes);
       const file = this.deps.fs.getFileByPath(path) ?? localFile;
-      await this.uploadFile(file, item.id, { plaintext: bytes, hash: await this.deps.crypto.hashContent(bytes) });
+      await this.uploadFile(file, item.id, { plaintext: bytes, hash: await this.deps.crypto.hashContent(bytes) }, "newer");
       new Notice(t("merge.merged", { path }), 8000);
+      this.deps.log?.add({ kind: "merged", path });
     }
     return true;
   }
@@ -839,6 +859,7 @@ export class SyncEngine {
     try {
       await this.deps.fs.writeBinary(candidate, textEncoder.encode(text));
       new Notice(t("merge.conflictCopy", { path, copy: candidate }), 12_000);
+      this.deps.log?.add({ kind: "conflict", path, args: [candidate] });
     } catch (err) {
       console.error("WebSync: Konfliktkopie konnte nicht erstellt werden", err);
     }
@@ -866,10 +887,12 @@ export class SyncEngine {
     file: TFile,
     fileId: string,
     precomputed?: { plaintext: Uint8Array; hash: Uint8Array },
+    why?: LogReason,
   ): Promise<void> {
     if (Platform.isMobile && file.stat.size > this.mobileLimit()) {
       if (!this.warnedOversizedIds.has(fileId)) {
         this.warnedOversizedIds.add(fileId);
+        this.deps.log?.add({ kind: "skipped", path: file.path, args: [file.stat.size] });
         new Notice(
           t("p.sync.tooBigMobile", { path: file.path, size: formatBytes(file.stat.size) }),
         );
@@ -938,6 +961,7 @@ export class SyncEngine {
       await this.deleteRemote(record);
       return;
     }
+    this.deps.log?.add({ kind: "up", path: file.path, why, args: [uploadedPlaintext.byteLength] });
     await this.rememberBase(fileId, file.path, uploadedPlaintext, toBase64(hash));
   }
 
@@ -966,7 +990,7 @@ export class SyncEngine {
     return false;
   }
 
-  private async downloadFile(item: DecodedFileListItem, path: string): Promise<void> {
+  private async downloadFile(item: DecodedFileListItem, path: string, why?: LogReason): Promise<void> {
     if (isMarkerPath(path)) {
       // Folder marker: nothing to download, just make sure the (empty) folder exists here.
       await this.deps.fs.writeMarker(path);
@@ -984,6 +1008,7 @@ export class SyncEngine {
     if (Platform.isMobile && item.contentSize > this.mobileLimit()) {
       if (!this.warnedOversizedIds.has(item.id)) {
         this.warnedOversizedIds.add(item.id);
+        this.deps.log?.add({ kind: "skipped", path, args: [item.contentSize] });
         new Notice(
           t("p.sync.tooBigMobile", { path, size: formatBytes(item.contentSize) }),
         );
@@ -1021,6 +1046,7 @@ export class SyncEngine {
       lastContentHashBlinded: toBase64(item.contentHashBlinded),
       lastSyncedAt: new Date().toISOString(),
     });
+    this.deps.log?.add({ kind: "down", path, why, args: [downloaded.byteLength] });
     await this.rememberBase(item.id, path, downloaded, toBase64(item.contentHashBlinded));
     this.bumpGlobalVersion(item.version);
   }
@@ -1028,6 +1054,7 @@ export class SyncEngine {
   private async applyRemoteDelete(fileId: string, path: string): Promise<void> {
     await this.deps.fs.deleteByPath(path);
     await this.deps.localIndex.delete(fileId);
+    if (!isMarkerPath(path)) this.deps.log?.add({ kind: "delete-down", path });
   }
 
   private bumpGlobalVersion(version: number): void {

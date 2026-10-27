@@ -85,6 +85,15 @@ export class WebSyncStatusBar {
       );
     }
 
+    if (status.kind !== "not-configured") {
+      menu.addItem((item) =>
+        item
+          .setTitle(t("p.log.menu"))
+          .setIcon("list")
+          .onClick(() => this.plugin.openSyncLog()),
+      );
+    }
+
     if ((status.kind === "storage-full" || status.kind === "read-only") && this.plugin.account?.webUrl) {
       const planUrl = `${this.plugin.account.webUrl.replace(/\/+$/, "")}/account/billing`;
       menu.addItem((item) =>

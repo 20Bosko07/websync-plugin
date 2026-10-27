@@ -13,6 +13,7 @@ import { FileSystemAdapter } from "./sync/FileSystemAdapter.js";
 import { LocalIndex } from "./sync/LocalIndex.js";
 import { SyncEngine } from "./sync/SyncEngine.js";
 import { ConfigSyncEngine } from "./sync/ConfigSyncEngine.js";
+import { SyncLog } from "./sync/SyncLog.js";
 import { LiveSyncClient } from "./sync/LiveSyncClient.js";
 import { CollabManager } from "./collab/CollabManager.js";
 import { collabCompartment } from "./collab/editorBinding.js";
@@ -23,6 +24,7 @@ import { ExplorerProgressRings, createTransferTracker } from "./ui/TransferProgr
 import { HISTORY_VIEW_TYPE, HistoryView } from "./ui/HistoryView.js";
 import { PublishService } from "./publish/PublishService.js";
 import { PublishModal } from "./ui/PublishModal.js";
+import { SyncLogModal } from "./ui/SyncLogModal.js";
 import { HISTORY_DIFF_VIEW_TYPE, HistoryDiffView } from "./ui/HistoryDiffView.js";
 
 export default class WebSyncPlugin extends Plugin {
@@ -58,6 +60,8 @@ export default class WebSyncPlugin extends Plugin {
   private settingsTab: WebSyncSettingsTab | null = null;
   private statusBar!: WebSyncStatusBar;
   private headerActions!: WebSyncHeaderActions;
+  /** What the sync did (the "Sync log" dialog); lives as long as the plugin, across unlink / relink. */
+  syncLog!: SyncLog;
   private progressRings!: ExplorerProgressRings;
 
   async onload(): Promise<void> {
@@ -72,6 +76,8 @@ export default class WebSyncPlugin extends Plugin {
     this.cryptoService = new CryptoService();
     this.vaultLinkManager = new VaultLinkManager(this.remoteApi, this.cryptoService);
     this.fsAdapter = new FileSystemAdapter(this.app);
+    this.syncLog = new SyncLog(this.app, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/sync-log.json`);
+    void this.syncLog.load();
 
     this.settingsTab = new WebSyncSettingsTab(this.app, this);
     this.addSettingTab(this.settingsTab);
@@ -137,6 +143,11 @@ export default class WebSyncPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "websync-sync-log",
+      name: t("p.log.cmd"),
+      callback: () => this.openSyncLog(),
+    });
+    this.addCommand({
       id: "websync-sync-now",
       name: t("p.cmd.syncNow"),
       callback: () => void this.runManualSync(),
@@ -150,7 +161,12 @@ export default class WebSyncPlugin extends Plugin {
     });
   }
 
+  openSyncLog(): void {
+    new SyncLogModal(this.app, this.syncLog).open();
+  }
+
   onunload(): void {
+    void this.syncLog?.flush();
     this.stopSync();
     this.statusBar?.dispose();
     this.headerActions?.dispose();
@@ -299,6 +315,7 @@ export default class WebSyncPlugin extends Plugin {
       isConfigPath: (path) => path.startsWith(configDirPrefix),
       isCollabLive: (fileId) => this.collabManager?.isLive(fileId) ?? false,
       transfers: this.transfers,
+      log: this.syncLog,
       initialGlobalVersion: linkedVault.lastSyncedGlobalVersion,
       onStateChange: async (state) => {
         this.settings.lastSyncAt = state.lastSyncAt;
@@ -323,6 +340,7 @@ export default class WebSyncPlugin extends Plugin {
       crypto: this.cryptoService,
       remote: this.remoteApi,
       getSettings: () => this.settings.configSync,
+      log: this.syncLog,
       onLastVersionChange: async (version) => {
         this.settings.configSync.lastSyncedGlobalVersion = version;
         await this.saveSettings();
@@ -407,6 +425,7 @@ export default class WebSyncPlugin extends Plugin {
           const base = await localIndex.getBase(record.fileId).catch(() => undefined);
           return base && base.hash === record.lastContentHashBlinded ? base.text : null;
         },
+        log: this.syncLog,
         isEnabled: () => this.settings.collabEnabled && !this.settings.syncPaused,
         onPresenceChange: () => this.headerActions?.refresh(),
       });

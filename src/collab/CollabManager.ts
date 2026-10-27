@@ -10,6 +10,7 @@ import {
   type CollabServerMessage,
 } from "@websync/shared";
 import type { CryptoService } from "../sync/CryptoService.js";
+import type { SyncLog } from "../sync/SyncLog.js";
 import { CollabSession } from "./CollabSession.js";
 import { bindEditor, canBind, createCollabExtension, getEditorView, replaceEditorText, unbindEditor } from "./editorBinding.js";
 import { CollabKind, openCollabMessage, sealCollabMessage } from "./protocol.js";
@@ -37,6 +38,7 @@ export interface CollabManagerDeps {
   /** The text this device last had in common with the server for `path` (the merge base), or null if unknown. */
   mergeBase: (path: string) => Promise<string | null>;
   isEnabled: () => boolean;
+  log?: SyncLog;
   /** Called whenever who-is-in-which-note may have changed, so the UI (header avatars) can re-read `presenceFor`. */
   onPresenceChange: () => void;
 }
@@ -363,6 +365,7 @@ export class CollabManager {
     this.unbind(room);
     room.session?.destroy();
     room.session = null;
+    if (room.synced) this.deps.log?.add({ kind: "live-leave", path: room.path });
     room.synced = false;
   }
 
@@ -431,6 +434,7 @@ export class CollabManager {
       // Edits made here while the host did something else usually merge cleanly; only a real overlap needs a copy.
       const merged = hasOwnEdits && base !== null ? merge3(base, now, hostText) : null;
       if (hasOwnEdits && merged === null) await this.saveConflictCopy(room, now);
+      if (merged !== null) this.deps.log?.add({ kind: "merged", path: room.path });
       replaceEditorText(latestCm, hostText);
       this.finishJoin(room, session, latestCm);
       if (merged !== null && merged !== hostText) {
@@ -449,6 +453,7 @@ export class CollabManager {
     room.stateRequestTimer = null;
     this.bind(room, cm);
     room.synced = true;
+    this.deps.log?.add({ kind: "live-join", path: room.path });
     session.announce();
     this.updateStatus();
   }
@@ -495,6 +500,7 @@ export class CollabManager {
         t("p.collab.conflictCopy", { from: room.path, to: candidate }),
         10_000,
       );
+      this.deps.log?.add({ kind: "conflict", path: room.path, args: [candidate] });
     } catch (err) {
       console.error("WebSync: Sicherungskopie konnte nicht erstellt werden", err);
     }

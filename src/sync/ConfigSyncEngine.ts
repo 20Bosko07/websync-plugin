@@ -34,6 +34,7 @@ import { MOBILE_MAX_SYNC_FILE_SIZE_BYTES, toBase64, unpackBlob } from "@websync/
 import type { ConfigSyncSettings } from "../types.js";
 import type { CryptoService } from "./CryptoService.js";
 import type { DecodedFileListItem, RemoteApiClient } from "./RemoteApiClient.js";
+import type { SyncLog } from "./SyncLog.js";
 
 type ConfigCategory = Exclude<keyof ConfigSyncSettings, "enabled" | "lastSyncedGlobalVersion" | "known">;
 
@@ -44,6 +45,7 @@ export interface ConfigSyncEngineDeps {
   crypto: CryptoService;
   remote: RemoteApiClient;
   getSettings: () => ConfigSyncSettings;
+  log?: SyncLog;
   onLastVersionChange: (version: number) => void | Promise<void>;
 }
 
@@ -256,6 +258,7 @@ export class ConfigSyncEngine {
       contentIv: encryptedContent.iv,
       contentCiphertext: encryptedContent.ciphertext,
     });
+    this.deps.log?.add({ kind: "settings-up", path });
     return hash;
   }
 
@@ -274,6 +277,7 @@ export class ConfigSyncEngine {
     await this.ensureParentDir(path);
     await this.deps.app.vault.adapter.writeBinary(path, toArrayBuffer(plaintext));
     this.reconciledMtimes.set(path, await this.statMtime(path)); // the write itself changed the mtime
+    this.deps.log?.add({ kind: "settings-down", path });
     return true;
   }
 
