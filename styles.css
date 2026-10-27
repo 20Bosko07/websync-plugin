@@ -51,12 +51,24 @@
 
 /* ---- Note header action: sync status (mobile) + live avatars -------------- */
 
-.websync-header-action {
+.websync-header-action,
+.view-actions .websync-header-action,
+.is-mobile .view-actions .websync-header-action {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
-  width: auto;
-  padding-inline: 4px;
+  gap: 6px;
+  /* Obsidian gives a header button a fixed width; with avatars next to the icon the content must set the width,
+     or the avatars run over the neighbouring buttons (the reading-view toggle on phones). */
+  width: max-content !important;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
+  padding-inline: 6px;
+}
+
+.websync-header-action > * {
+  flex: none;
 }
 
 .websync-header-icon {

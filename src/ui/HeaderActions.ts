@@ -14,14 +14,15 @@
  * touched when the rendered result actually changes.
  */
 import { t } from "../i18n/index.js";
-import { ItemView, MarkdownView, Menu, setIcon, setTooltip } from "obsidian";
+import { ItemView, MarkdownView, Menu, Platform, setIcon, setTooltip } from "obsidian";
 import type WebSyncPlugin from "../main.js";
 import type { CollabPresence } from "../collab/CollabManager.js";
 import { describeStatus, type WebSyncStatusBar } from "./StatusBar.js";
 
 const REFRESH_INTERVAL_MS = 1000;
 const ACTION_CLASS = "websync-header-action";
-const MAX_AVATARS = 3;
+/** The phone's header is narrow: fewer avatars there (the rest is counted in "+N"). */
+const maxAvatars = (): number => (Platform.isMobile ? 2 : 3);
 
 interface HeaderAction {
   el: HTMLElement;
@@ -116,12 +117,13 @@ export class WebSyncHeaderActions {
     let tooltip = described.tooltip;
     if (presence && presence.length > 0) {
       const avatars = el.createSpan({ cls: "websync-avatars" });
-      for (const peer of presence.slice(0, MAX_AVATARS)) {
+      const shown = maxAvatars();
+      for (const peer of presence.slice(0, shown)) {
         const avatar = avatars.createSpan({ cls: "websync-avatar", text: initialOf(peer.name) });
         avatar.style.backgroundColor = peer.color;
       }
-      if (presence.length > MAX_AVATARS) {
-        avatars.createSpan({ cls: "websync-avatar websync-avatar-more", text: `+${presence.length - MAX_AVATARS}` });
+      if (presence.length > shown) {
+        avatars.createSpan({ cls: "websync-avatar websync-avatar-more", text: `+${presence.length - shown}` });
       }
       const live = t("p.liveWith", { names: presence.map((peer) => peer.name).join(", ") });
       tooltip = `${tooltip} · ${live}`;
