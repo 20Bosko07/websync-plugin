@@ -294,7 +294,7 @@ export class SyncEngine {
       return true;
     } catch (err) {
       if (this.disposed || isFatal(err)) throw err;
-      console.error(`WebSync: "${path ?? key}" konnte nicht synchronisiert werden`, err);
+      console.error(`Syncstone: "${path ?? key}" konnte nicht synchronisiert werden`, err);
       const count = (previous?.count ?? 0) + 1;
       this.failed.set(key, { until: count >= MAX_FILE_ATTEMPTS ? Number.POSITIVE_INFINITY : Date.now() + FAILURE_BACKOFF_MS, count });
       if (count < MAX_FILE_ATTEMPTS) this.runFailures++;
@@ -351,7 +351,7 @@ export class SyncEngine {
       action()
         .catch((err) => {
           if ((err as { status?: unknown } | null)?.status === 402) this.deps.onWriteRefused?.("read-only");
-          console.error(`WebSync: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
+          console.error(`Syncstone: lokale Änderung an "${key}" konnte nicht synchronisiert werden`, err);
           this.logError(err, key.replace(/^folder:/, ""));
           if (!key.startsWith("folder:")) this.deps.transfers?.fail(key, t("p.fail.error", { error: errorArgs(err)[0] ?? "" }));
         })
@@ -563,7 +563,7 @@ export class SyncEngine {
     const missing = tracked.filter((r) => !localByPath.has(r.localPath)).length;
     const allowLocalDeletes = missing <= 10 || missing <= tracked.length / 2;
     if (!allowLocalDeletes) {
-      console.warn(`WebSync: ${missing} von ${tracked.length} Dateien fehlen lokal - sie werden wiederhergestellt statt gelöscht.`);
+      console.warn(`Syncstone: ${missing} von ${tracked.length} Dateien fehlen lokal - sie werden wiederhergestellt statt gelöscht.`);
       new Notice(t("p.sync.missingLocal", { count: missing }));
     }
 
@@ -584,7 +584,7 @@ export class SyncEngine {
       try {
         path = await this.deps.crypto.decryptPath(item.pathCiphertext, item.pathNonce);
       } catch (err) {
-        console.error(`WebSync: Pfad für Datei ${item.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
+        console.error(`Syncstone: Pfad für Datei ${item.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
         continue;
       }
       if (this.deps.isConfigPath(path) || handledPaths.has(path)) continue;
@@ -695,7 +695,7 @@ export class SyncEngine {
     try {
       path = await this.deps.crypto.decryptPath(remoteItem.pathCiphertext, remoteItem.pathNonce);
     } catch (err) {
-      console.error(`WebSync: Pfad für Datei ${remoteItem.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
+      console.error(`Syncstone: Pfad für Datei ${remoteItem.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
       return;
     }
 
@@ -801,7 +801,7 @@ export class SyncEngine {
     try {
       path = await this.deps.crypto.decryptPath(item.pathCiphertext, item.pathNonce);
     } catch (err) {
-      console.error(`WebSync: Pfad für Datei ${item.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
+      console.error(`Syncstone: Pfad für Datei ${item.id} konnte nicht entschlüsselt werden - übersprungen.`, err);
       return;
     }
     if (this.deps.isConfigPath(path)) return;
@@ -892,7 +892,7 @@ export class SyncEngine {
       if (text === null) await this.deps.localIndex.deleteBase(fileId);
       else await this.deps.localIndex.putBase({ fileId, hash: hashBase64, text });
     } catch (err) {
-      console.warn("WebSync: Merge-Basis konnte nicht gespeichert werden", err);
+      console.warn("Syncstone: Merge-Basis konnte nicht gespeichert werden", err);
     }
   }
 
@@ -921,7 +921,7 @@ export class SyncEngine {
     try {
       remoteBytes = await this.fetchRemotePlaintext(item);
     } catch (err) {
-      console.warn("WebSync: Server-Version für den Merge nicht ladbar", err);
+      console.warn("Syncstone: Server-Version für den Merge nicht ladbar", err);
       return false;
     }
     const localText = decodeText(localBytes);
@@ -964,7 +964,7 @@ export class SyncEngine {
       new Notice(t("merge.conflictCopy", { path, copy: candidate }), 12_000);
       this.deps.log?.add({ kind: "conflict", path, args: [candidate] });
     } catch (err) {
-      console.error("WebSync: Konfliktkopie konnte nicht erstellt werden", err);
+      console.error("Syncstone: Konfliktkopie konnte nicht erstellt werden", err);
     }
   }
 

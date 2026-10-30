@@ -1,5 +1,5 @@
 /**
- * The API server of the hosted WebSync service - what the plugin talks to unless the user switches on "self-hosting" in
+ * The API server of the hosted Syncstone service - what the plugin talks to unless the user switches on "self-hosting" in
  * the settings (Advanced). It is the address of the API server (the one the web app itself calls), not of the web app.
  * DEV build: points at the development server. Change it to the production address before a release for everybody.
  */

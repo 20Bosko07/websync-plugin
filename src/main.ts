@@ -198,7 +198,7 @@ export default class WebSyncPlugin extends Plugin {
       else if (wasBlocked) {
         // Room again (files deleted, plan bought): forget the notice and upload what was skipped meanwhile.
         this.blockedNoticeShown = null;
-        void this.syncEngine?.runFullSync().catch((err) => console.error("WebSync: Sync nach Freigabe fehlgeschlagen", err));
+        void this.syncEngine?.runFullSync().catch((err) => console.error("Syncstone: Sync nach Freigabe fehlgeschlagen", err));
       }
     } catch {
       // Offline or the server is busy: keep what we knew.
@@ -375,7 +375,7 @@ export default class WebSyncPlugin extends Plugin {
       } catch (err) {
         // Stopped meanwhile (unlinked, signed out, locked): the failure is a consequence of that, not news.
         if (this.syncEngine === syncEngine) {
-          console.error("WebSync: initialer Full-Sync fehlgeschlagen", err);
+          console.error("Syncstone: initialer Full-Sync fehlgeschlagen", err);
           new Notice(t("p.syncFailed", { error: (err as Error).message }));
         }
       }
@@ -383,7 +383,7 @@ export default class WebSyncPlugin extends Plugin {
       try {
         await configSyncEngine.run();
       } catch (err) {
-        console.error("WebSync: initialer Einstellungs-Sync fehlgeschlagen", err);
+        console.error("Syncstone: initialer Einstellungs-Sync fehlgeschlagen", err);
       }
       this.statusBar?.refresh();
     })();
@@ -522,10 +522,10 @@ export default class WebSyncPlugin extends Plugin {
   pollNow(): void {
     if (this.settings.syncPaused) return;
     void this.syncEngine?.runIncrementalPoll().catch((err) => {
-      console.error("WebSync: Remote-Polling fehlgeschlagen", err);
+      console.error("Syncstone: Remote-Polling fehlgeschlagen", err);
     });
     void this.configSyncEngine?.run().catch((err) => {
-      console.error("WebSync: Einstellungs-Sync fehlgeschlagen", err);
+      console.error("Syncstone: Einstellungs-Sync fehlgeschlagen", err);
     });
   }
 
@@ -562,7 +562,7 @@ export default class WebSyncPlugin extends Plugin {
       const failed = this.syncEngine.failedCount;
       new Notice(failed > 0 ? t("p.syncPartial", { count: failed }) : t("p.syncDone"));
     } catch (err) {
-      console.error("WebSync: Synchronisierung fehlgeschlagen", err);
+      console.error("Syncstone: Synchronisierung fehlgeschlagen", err);
       new Notice(t("p.syncFailed", { error: (err as Error).message }));
     }
     this.statusBar?.refresh();
@@ -575,7 +575,7 @@ export default class WebSyncPlugin extends Plugin {
       await this.cryptoService.unlockWithCachedRootBits(this.settings.cachedKeyMaterial.rootBitsBase64);
       return true;
     } catch (err) {
-      console.error("WebSync: gecachter Schlüssel konnte nicht verwendet werden", err);
+      console.error("Syncstone: gecachter Schlüssel konnte nicht verwendet werden", err);
       return false;
     }
   }

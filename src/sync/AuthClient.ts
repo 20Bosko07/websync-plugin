@@ -20,7 +20,7 @@ export class AuthClient {
 
   private get serverUrl(): string {
     const url = this.getServerUrl();
-    if (!url) throw new Error("WebSync: Server-URL ist nicht konfiguriert.");
+    if (!url) throw new Error("Syncstone: Server-URL ist nicht konfiguriert.");
     return url;
   }
 
@@ -44,7 +44,7 @@ export class AuthClient {
   async startDeviceAuth(deviceName: string): Promise<DeviceStartResponse> {
     await this.assertCompatibleServer();
     const clientType = Platform.isMobile ? "plugin-mobile" : "plugin-desktop";
-    const resolvedDeviceName = deviceName.trim() || `WebSync Plugin (${Platform.isMobile ? "Mobile" : "Desktop"})`;
+    const resolvedDeviceName = deviceName.trim() || `Syncstone Plugin (${Platform.isMobile ? "Mobile" : "Desktop"})`;
     const payload: DeviceStartRequest = { clientType, deviceName: resolvedDeviceName };
     return apiRequest<DeviceStartResponse>(this.serverUrl, {
       method: "POST",

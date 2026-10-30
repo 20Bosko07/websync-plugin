@@ -117,7 +117,7 @@ interface RawResponse {
 }
 
 async function doRequest(serverUrl: string, options: RequestOptions): Promise<RawResponse> {
-  if (!serverUrl) throw new WebSyncApiError("WebSync: Server-URL ist nicht konfiguriert.", 0);
+  if (!serverUrl) throw new WebSyncApiError("Syncstone: Server-URL ist nicht konfiguriert.", 0);
   const url = `${trimTrailingSlash(serverUrl)}${options.path}`;
   const headers: Record<string, string> = { "Accept-Language": currentLocale(), ...options.headers };
   if (options.token) headers["Authorization"] = `Bearer ${options.token}`;

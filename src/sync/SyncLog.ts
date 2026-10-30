@@ -135,7 +135,7 @@ export class SyncLog {
     try {
       await this.app.vault.adapter.write(this.filePath, JSON.stringify(this.entries));
     } catch (err) {
-      console.warn("WebSync: Sync-Log konnte nicht gespeichert werden", err);
+      console.warn("Syncstone: Sync-Log konnte nicht gespeichert werden", err);
     }
   }
 }

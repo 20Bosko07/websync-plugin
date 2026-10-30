@@ -1,10 +1,10 @@
 {
   "id": "websync",
-  "name": "WebSync",
+  "name": "Syncstone",
   "version": "0.2.13",
   "minAppVersion": "1.4.0",
-  "description": "End-to-end encrypted vault sync with your own WebSync server.",
-  "author": "WebSync",
-  "authorUrl": "",
+  "description": "End-to-end encrypted vault sync with Syncstone.",
+  "author": "Syncstone",
+  "authorUrl": "https://syncst.one",
   "isDesktopOnly": false
 }

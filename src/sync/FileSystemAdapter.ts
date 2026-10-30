@@ -179,7 +179,7 @@ export class FileSystemAdapter {
       // data loss); the caller's follow-up reconcile/download handles the
       // content at `newPath`.
       if (!isAlreadyExistsError(err)) throw err;
-      console.warn(`WebSync: Umbenennen von "${normalizedOld}" nach "${normalizedNew}" übersprungen - Ziel existiert bereits.`);
+      console.warn(`Syncstone: Umbenennen von "${normalizedOld}" nach "${normalizedNew}" übersprungen - Ziel existiert bereits.`);
       return;
     }
     await this.pruneEmptyParentFolders(normalizedOld);
@@ -213,13 +213,13 @@ export class FileSystemAdapter {
             // `vault.delete` refuse. The folder is verified empty on disk above, so remove it there directly - otherwise
             // it stays behind, and the next full sync would even give it a marker and bring it back everywhere.
             if (await adapter.exists(folderPath)) {
-              console.warn(`WebSync: Ordner "${folderPath}" über den Vault nicht löschbar, entferne ihn direkt`, err);
+              console.warn(`Syncstone: Ordner "${folderPath}" über den Vault nicht löschbar, entferne ihn direkt`, err);
               await adapter.rmdir(folderPath, false);
             }
           }
         }
       } catch (err) {
-        console.warn(`WebSync: leerer Ordner "${folderPath}" konnte nicht entfernt werden`, err);
+        console.warn(`Syncstone: leerer Ordner "${folderPath}" konnte nicht entfernt werden`, err);
         return;
       }
       folderPath = parentFolderOf(folderPath);

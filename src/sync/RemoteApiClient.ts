@@ -90,13 +90,13 @@ export class RemoteApiClient {
 
   private get serverUrl(): string {
     const url = this.getServerUrl();
-    if (!url) throw new Error("WebSync: Server-URL ist nicht konfiguriert.");
+    if (!url) throw new Error("Syncstone: Server-URL ist nicht konfiguriert.");
     return url;
   }
 
   private get token(): string {
     const token = this.getSessionToken();
-    if (!token) throw new Error("WebSync: nicht angemeldet.");
+    if (!token) throw new Error("Syncstone: nicht angemeldet.");
     return token;
   }
 

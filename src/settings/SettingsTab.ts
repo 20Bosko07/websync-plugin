@@ -109,7 +109,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
       }
     }
     const hero = parent.createDiv({ cls: "websync-hero" });
-    hero.createDiv({ cls: "websync-hero-title", text: "WebSync" });
+    hero.createDiv({ cls: "websync-hero-title", text: "Syncstone" });
     const line = hero.createDiv({ cls: "websync-hero-status" });
     line.createSpan({ cls: `websync-dot is-${tone}` });
     line.createSpan({ text });
@@ -294,7 +294,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
             input?.setValue(remoteName);
           }
         })
-        .catch((err) => console.error("WebSync: Gerätename konnte nicht geladen werden", err));
+        .catch((err) => console.error("Syncstone: Gerätename konnte nicht geladen werden", err));
     }
   }
 
@@ -384,7 +384,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
       // Any poll error - including the 404 the server returns once a
       // pairing has already resolved and is polled again - is terminal:
       // stop polling and let the user retry, per AuthClient.pollDeviceAuth.
-      console.error("WebSync: Device-Pairing-Poll fehlgeschlagen", err);
+      console.error("Syncstone: Device-Pairing-Poll fehlgeschlagen", err);
       this.clearPollTimer();
       this.pairingState = "expired";
       this.display();
@@ -441,7 +441,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       })
-      .catch((err) => console.error("WebSync: Kontoinformationen konnten nicht geladen werden", err));
+      .catch((err) => console.error("Syncstone: Kontoinformationen konnten nicht geladen werden", err));
 
     this.pairingState = "idle";
     this.pairingCode = null;
@@ -469,7 +469,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
     try {
       if (token) await this.plugin.authClient.logout(token);
     } catch (err) {
-      console.error("WebSync: Logout fehlgeschlagen", err);
+      console.error("Syncstone: Logout fehlgeschlagen", err);
     }
     this.plugin.settings.sessionToken = null;
     this.plugin.settings.sessionExpiresAt = null;
@@ -530,7 +530,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
 
   /**
    * Plan, subscription state, storage and limits - the same facts as the web app's "Plan" tab. Only shown when the
-   * server is the hosted WebSync service (a self-hosted server has no plans and answers nothing here).
+   * server is the hosted Syncstone service (a self-hosted server has no plans and answers nothing here).
    */
   private renderPlanSection(parent: HTMLElement): void {
     if (!this.plugin.settings.sessionToken) return;
@@ -864,7 +864,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
           config.enabled = value;
           if (value) this.openSections.add("config-categories"); // show the choices right away
           await this.plugin.saveSettings();
-          if (value) void this.plugin.configSyncEngine?.run().catch((err) => console.error("WebSync: Einstellungs-Sync fehlgeschlagen", err));
+          if (value) void this.plugin.configSyncEngine?.run().catch((err) => console.error("Syncstone: Einstellungs-Sync fehlgeschlagen", err));
           this.display();
         }),
       );
@@ -907,7 +907,7 @@ export class WebSyncSettingsTab extends PluginSettingTab {
           toggle.setValue(config[category.key]).onChange(async (value) => {
             config[category.key] = value;
             await this.plugin.saveSettings();
-            void this.plugin.configSyncEngine?.run().catch((err) => console.error("WebSync: Einstellungs-Sync fehlgeschlagen", err));
+            void this.plugin.configSyncEngine?.run().catch((err) => console.error("Syncstone: Einstellungs-Sync fehlgeschlagen", err));
             // Keep the "n von 6 aktiv" hint current without collapsing the dropdown.
             dropdown.parentElement?.querySelector(".websync-section-summary")?.setText(`${countActive()} von ${categories.length} aktiv`);
           }),

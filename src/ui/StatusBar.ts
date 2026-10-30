@@ -129,7 +129,7 @@ export class WebSyncStatusBar {
     this.plugin.settings.syncPaused = !this.plugin.settings.syncPaused;
     await this.plugin.saveSettings();
     this.plugin.refreshCollab();
-    new Notice(`WebSync: ${this.plugin.settings.syncPaused ? "pausiert" : "fortgesetzt"}.`);
+    new Notice(`Syncstone: ${this.plugin.settings.syncPaused ? "pausiert" : "fortgesetzt"}.`);
     this.refresh();
   }
 
@@ -148,29 +148,29 @@ export function describeStatus(
     case "not-configured":
       return {
         icon: "cloud-off",
-        text: "WebSync",
+        text: "Syncstone",
         tooltip: t("p.tip.notConfigured"),
         spin: false,
       };
     case "locked":
       return {
         icon: "lock",
-        text: "WebSync",
+        text: "Syncstone",
         tooltip: t("p.tip.locked"),
         spin: false,
       };
     case "storage-full":
-      return { icon: "alert-circle", text: "WebSync", tooltip: t("p.tip.storageFull"), spin: false, alert: true };
+      return { icon: "alert-circle", text: "Syncstone", tooltip: t("p.tip.storageFull"), spin: false, alert: true };
     case "read-only":
-      return { icon: "alert-circle", text: "WebSync", tooltip: t("p.tip.readOnly"), spin: false, alert: true };
+      return { icon: "alert-circle", text: "Syncstone", tooltip: t("p.tip.readOnly"), spin: false, alert: true };
     case "paused":
-      return { icon: "pause-circle", text: "WebSync", tooltip: t("p.tip.paused"), spin: false };
+      return { icon: "pause-circle", text: "Syncstone", tooltip: t("p.tip.paused"), spin: false };
     case "syncing":
-      return { icon: "refresh-cw", text: "WebSync", tooltip: t("p.tip.syncing"), spin: true };
+      return { icon: "refresh-cw", text: "Syncstone", tooltip: t("p.tip.syncing"), spin: true };
     case "disconnected":
       return {
         icon: "wifi-off",
-        text: "WebSync",
+        text: "Syncstone",
         tooltip: t("p.tip.disconnected"),
         spin: false,
       };
@@ -178,8 +178,8 @@ export function describeStatus(
       const when = lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString() : null;
       return {
         icon: "check-circle",
-        text: "WebSync",
-        tooltip: when ? `WebSync: synchronisiert (zuletzt ${when})` : "WebSync: synchronisiert",
+        text: "Syncstone",
+        tooltip: when ? `Syncstone: synchronisiert (zuletzt ${when})` : "Syncstone: synchronisiert",
         spin: false,
       };
     }

@@ -1,5 +1,5 @@
 /**
- * What `GET /billing` answers on the hosted WebSync service (plan, subscription state, limits). A self-hosted server has
+ * What `GET /billing` answers on the hosted Syncstone service (plan, subscription state, limits). A self-hosted server has
  * no such endpoint, so the plugin only shows the plan section when this answers. Only the fields the plugin shows are
  * listed - everything else the server sends is ignored, so the hosted service can grow without breaking the plugin.
  */

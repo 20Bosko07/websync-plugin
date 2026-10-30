@@ -89,7 +89,7 @@ export class LiveSyncClient {
     try {
       socket = new WebSocket(this.buildUrl());
     } catch (err) {
-      console.error("WebSync: Live-Sync-Verbindung konnte nicht aufgebaut werden", err);
+      console.error("Syncstone: Live-Sync-Verbindung konnte nicht aufgebaut werden", err);
       this.scheduleReconnect();
       return;
     }
@@ -120,7 +120,7 @@ export class LiveSyncClient {
     // failures, so reconnection is scheduled from onclose above - this is
     // just for diagnostics, to avoid double-scheduling a reconnect.
     socket.onerror = () => {
-      console.error("WebSync: Live-Sync-Verbindung getrennt (Fehler)");
+      console.error("Syncstone: Live-Sync-Verbindung getrennt (Fehler)");
     };
   }
 

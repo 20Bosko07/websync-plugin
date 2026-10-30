@@ -1,11 +1,11 @@
 /**
- * WebSync's presence in the tab header (the icon row top right, next to the
+ * Syncstone's presence in the tab header (the icon row top right, next to the
  * reading-view "book" toggle and the "..." menu), built with Obsidian's own `view.addAction`:
  *
  *  - While other devices are in the same note, a compact stack of coloured
  *    avatars (initial of the device name, same colour as their cursor). The
  *    full names are in the tooltip and in the menu you get on click.
- *  - The general WebSync status icon (synced / syncing / offline / locked ...)
+ *  - The general Syncstone status icon (synced / syncing / offline / locked ...)
  *    lives here on every note and on every platform (there is no bottom status
  *    bar item any more). Clicking it opens the sync menu; the icon alone is the
  *    label, no text.
@@ -78,7 +78,7 @@ export class WebSyncHeaderActions {
       }
       for (const extra of present) if (extra !== action?.el) extra.remove();
       if (!action) {
-        const el = view.addAction("cloud", "WebSync", (evt) => this.onClick(evt, view));
+        const el = view.addAction("cloud", "Syncstone", (evt) => this.onClick(evt, view));
         el.addClass(ACTION_CLASS);
         action = { el, signature: "" };
         this.actions.set(view, action);

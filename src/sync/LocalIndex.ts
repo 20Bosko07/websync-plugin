@@ -63,7 +63,7 @@ export class LocalIndex {
         if (!db.objectStoreNames.contains(BASE_STORE)) db.createObjectStore(BASE_STORE, { keyPath: "fileId" });
       };
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("WebSync: IndexedDB konnte nicht geöffnet werden."));
+      request.onerror = () => reject(request.error ?? new Error("Syncstone: IndexedDB konnte nicht geöffnet werden."));
     });
   }
 
@@ -73,7 +73,7 @@ export class LocalIndex {
   }
 
   private store(mode: IDBTransactionMode): IDBObjectStore {
-    if (!this.db) throw new Error("WebSync: LocalIndex ist nicht geöffnet - open() wurde nicht aufgerufen.");
+    if (!this.db) throw new Error("Syncstone: LocalIndex ist nicht geöffnet - open() wurde nicht aufgerufen.");
     return this.db.transaction(STORE_NAME, mode).objectStore(STORE_NAME);
   }
 
@@ -108,7 +108,7 @@ export class LocalIndex {
   }
 
   private baseStore(mode: IDBTransactionMode): IDBObjectStore {
-    if (!this.db) throw new Error("WebSync: LocalIndex ist nicht geöffnet - open() wurde nicht aufgerufen.");
+    if (!this.db) throw new Error("Syncstone: LocalIndex ist nicht geöffnet - open() wurde nicht aufgerufen.");
     return this.db.transaction(BASE_STORE, mode).objectStore(BASE_STORE);
   }
 
@@ -119,7 +119,7 @@ export class LocalIndex {
   private request<T>(req: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error ?? new Error("WebSync: IndexedDB-Anfrage fehlgeschlagen."));
+      req.onerror = () => reject(req.error ?? new Error("Syncstone: IndexedDB-Anfrage fehlgeschlagen."));
     });
   }
 
@@ -129,7 +129,7 @@ export class LocalIndex {
       const request = indexedDB.deleteDatabase(`websync-index-${vaultId}`);
       request.onsuccess = () => resolve();
       request.onerror = () =>
-        reject(request.error ?? new Error("WebSync: IndexedDB-Datenbank konnte nicht gelöscht werden."));
+        reject(request.error ?? new Error("Syncstone: IndexedDB-Datenbank konnte nicht gelöscht werden."));
       request.onblocked = () => resolve();
     });
   }

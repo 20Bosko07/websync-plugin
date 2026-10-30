@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copies packages/shared from a checkout of the WebSync server repo into ./shared, so the plugin always speaks the
+# Copies packages/shared from a checkout of the Syncstone server repo into ./shared, so the plugin always speaks the
 # same crypto + wire protocol as the server. Usage: pnpm sync-shared ../websync
 set -euo pipefail
 CORE="${1:?usage: sync-shared.sh <path to the websync server repo>}"

@@ -3,7 +3,7 @@
   "version": "0.2.13",
   "private": true,
   "type": "module",
-  "description": "End-to-end encrypted vault sync with your own WebSync server.",
+  "description": "End-to-end encrypted vault sync with your own Syncstone server.",
   "packageManager": "pnpm@12.4.2",
   "scripts": {
     "dev": "node esbuild.config.mjs",

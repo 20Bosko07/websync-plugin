@@ -177,7 +177,7 @@ export class CollabManager {
       .then(() => {
         if (!this.disposed) return task();
       })
-      .catch((err) => console.error("WebSync: Live-Zusammenarbeit fehlgeschlagen", err));
+      .catch((err) => console.error("Syncstone: Live-Zusammenarbeit fehlgeschlagen", err));
   }
 
   // ============================================================
@@ -384,7 +384,7 @@ export class CollabManager {
       this.enqueue(() => {
         if (this.rooms.get(room.fileId) !== room || !room.session || room.synced) return;
         if (++room.stateRequestAttempts >= MAX_STATE_REQUEST_ATTEMPTS) {
-          console.warn(`WebSync: kein Live-Zustand für "${room.path}" erhalten - bleibt beim normalen Sync.`);
+          console.warn(`Syncstone: kein Live-Zustand für "${room.path}" erhalten - bleibt beim normalen Sync.`);
           this.stopSession(room);
           this.updateStatus();
           return;
@@ -482,7 +482,7 @@ export class CollabManager {
         if (this.disposed || this.rooms.get(room.fileId) !== room) return;
         this.deps.send({ type: "collab_relay", fileId: room.fileId, ...(to ? { to } : {}), data });
       })
-      .catch((err) => console.error("WebSync: Live-Nachricht konnte nicht verschlüsselt werden", err));
+      .catch((err) => console.error("Syncstone: Live-Nachricht konnte nicht verschlüsselt werden", err));
   }
 
   /** Puts edits this device never uploaded next to the note before the host's version replaces them. */
@@ -502,7 +502,7 @@ export class CollabManager {
       );
       this.deps.log?.add({ kind: "conflict", path: room.path, args: [candidate] });
     } catch (err) {
-      console.error("WebSync: Sicherungskopie konnte nicht erstellt werden", err);
+      console.error("Syncstone: Sicherungskopie konnte nicht erstellt werden", err);
     }
   }
 
